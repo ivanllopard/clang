@@ -78,7 +78,8 @@ public:
     // FIXME: Remove the second disjunct when we support symbolic
     // truncation/extension.
     return (Context.getCanonicalType(Ty1) == Context.getCanonicalType(Ty2) ||
-            (Ty1->isIntegerType() && Ty2->isIntegerType()));
+            (Ty1->isIntegralOrEnumerationType() &&
+             Ty2->isIntegralOrEnumerationType()));
   }
 
   SVal evalCast(SVal val, QualType castTy, QualType originalType);
@@ -199,7 +200,14 @@ public:
   DefinedSVal getFunctionPointer(const FunctionDecl *func);
   
   DefinedSVal getBlockPointer(const BlockDecl *block, CanQualType locTy,
-                              const LocationContext *locContext);
+                              const LocationContext *locContext,
+                              unsigned blockCount);
+
+  /// Returns the value of \p E, if it can be determined in a non-path-sensitive
+  /// manner.
+  ///
+  /// If \p E is not a constant or cannot be modeled, returns \c None.
+  Optional<SVal> getConstantVal(const Expr *E);
 
   NonLoc makeCompoundVal(QualType type, llvm::ImmutableList<SVal> vals) {
     return nonloc::CompoundVal(BasicVals.getCompoundValData(type, vals));

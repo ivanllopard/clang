@@ -51,6 +51,7 @@ namespace {
     void VisitEnumDecl(EnumDecl *D);
     void VisitRecordDecl(RecordDecl *D);
     void VisitEnumConstantDecl(EnumConstantDecl *D);
+    void VisitEmptyDecl(EmptyDecl *D);
     void VisitFunctionDecl(FunctionDecl *D);
     void VisitFriendDecl(FriendDecl *D);
     void VisitFieldDecl(FieldDecl *D);
@@ -81,9 +82,10 @@ namespace {
     void VisitUnresolvedUsingValueDecl(UnresolvedUsingValueDecl *D);
     void VisitUsingDecl(UsingDecl *D);
     void VisitUsingShadowDecl(UsingShadowDecl *D);
+    void VisitOMPThreadPrivateDecl(OMPThreadPrivateDecl *D);
 
     void PrintTemplateParameters(const TemplateParameterList *Params,
-                                 const TemplateArgumentList *Args);
+                                 const TemplateArgumentList *Args = 0);
     void prettyPrintAttributes(Decl *D);
   };
 }
@@ -258,6 +260,8 @@ void DeclPrinter::VisitDeclContext(DeclContext *DC, bool Indent) {
     QualType CurDeclType = getDeclType(*D);
     if (!Decls.empty() && !CurDeclType.isNull()) {
       QualType BaseType = GetBaseType(CurDeclType);
+      if (!BaseType.isNull() && isa<ElaboratedType>(BaseType))
+        BaseType = cast<ElaboratedType>(BaseType)->getNamedType();
       if (!BaseType.isNull() && isa<TagType>(BaseType) &&
           cast<TagType>(BaseType)->getDecl() == Decls[0]) {
         Decls.push_back(*D);
@@ -290,8 +294,10 @@ void DeclPrinter::VisitDeclContext(DeclContext *DC, bool Indent) {
 
     // FIXME: Need to be able to tell the DeclPrinter when
     const char *Terminator = 0;
-    if (isa<FunctionDecl>(*D) &&
-        cast<FunctionDecl>(*D)->isThisDeclarationADefinition())
+    if (isa<OMPThreadPrivateDecl>(*D))
+      Terminator = 0;
+    else if (isa<FunctionDecl>(*D) &&
+             cast<FunctionDecl>(*D)->isThisDeclarationADefinition())
       Terminator = 0;
     else if (isa<ObjCMethodDecl>(*D) && cast<ObjCMethodDecl>(*D)->getBody())
       Terminator = 0;
@@ -333,12 +339,14 @@ void DeclPrinter::VisitTypedefDecl(TypedefDecl *D) {
     if (D->isModulePrivate())
       Out << "__module_private__ ";
   }
-  D->getUnderlyingType().print(Out, Policy, D->getName());
+  D->getTypeSourceInfo()->getType().print(Out, Policy, D->getName());
   prettyPrintAttributes(D);
 }
 
 void DeclPrinter::VisitTypeAliasDecl(TypeAliasDecl *D) {
-  Out << "using " << *D << " = " << D->getUnderlyingType().getAsString(Policy);
+  Out << "using " << *D;
+  prettyPrintAttributes(D);
+  Out << " = " << D->getTypeSourceInfo()->getType().getAsString(Policy);
 }
 
 void DeclPrinter::VisitEnumDecl(EnumDecl *D) {
@@ -389,7 +397,7 @@ void DeclPrinter::VisitEnumConstantDecl(EnumConstantDecl *D) {
 void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
   CXXConstructorDecl *CDecl = dyn_cast<CXXConstructorDecl>(D);
   if (!Policy.SuppressSpecifiers) {
-    switch (D->getStorageClassAsWritten()) {
+    switch (D->getStorageClass()) {
     case SC_None: break;
     case SC_Extern: Out << "extern "; break;
     case SC_Static: Out << "static "; break;
@@ -483,7 +491,7 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
       for (CXXConstructorDecl::init_const_iterator B = CDecl->init_begin(),
            E = CDecl->init_end();
            B != E; ++B) {
-        CXXCtorInitializer * BMInitializer = (*B);
+        CXXCtorInitializer *BMInitializer = (*B);
         if (BMInitializer->isInClassMemberInitializer())
           continue;
 
@@ -542,9 +550,13 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
       }
       if (!Proto.empty())
         Out << Proto;
-    }
-    else
+    } else {
+      if (FT && FT->hasTrailingReturn()) {
+        Out << "auto " << Proto << " -> ";
+        Proto.clear();
+      }
       AFT->getResultType().print(Out, Policy, Proto);
+    }
   } else {
     Ty.print(Out, Policy, Proto);
   }
@@ -580,6 +592,9 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
 
 void DeclPrinter::VisitFriendDecl(FriendDecl *D) {
   if (TypeSourceInfo *TSI = D->getFriendType()) {
+    unsigned NumTPLists = D->getFriendTypeNumTemplateParameterLists();
+    for (unsigned i = 0; i < NumTPLists; ++i)
+      PrintTemplateParameters(D->getFriendTypeTemplateParameterList(i));
     Out << "friend ";
     Out << " " << TSI->getType().getAsString(Policy);
   }
@@ -606,7 +621,8 @@ void DeclPrinter::VisitFieldDecl(FieldDecl *D) {
   if (!Policy.SuppressSpecifiers && D->isModulePrivate())
     Out << "__module_private__ ";
 
-  Out << D->getType().stream(Policy, D->getName());
+  Out << D->getASTContext().getUnqualifiedObjCPointerType(D->getType()).
+            stream(Policy, D->getName());
 
   if (D->isBitField()) {
     Out << " : ";
@@ -630,25 +646,44 @@ void DeclPrinter::VisitLabelDecl(LabelDecl *D) {
 
 
 void DeclPrinter::VisitVarDecl(VarDecl *D) {
-  StorageClass SCAsWritten = D->getStorageClassAsWritten();
-  if (!Policy.SuppressSpecifiers && SCAsWritten != SC_None)
-    Out << VarDecl::getStorageClassSpecifierString(SCAsWritten) << " ";
+  if (!Policy.SuppressSpecifiers) {
+    StorageClass SC = D->getStorageClass();
+    if (SC != SC_None)
+      Out << VarDecl::getStorageClassSpecifierString(SC) << " ";
 
-  if (!Policy.SuppressSpecifiers && D->isThreadSpecified())
-    Out << "__thread ";
-  if (!Policy.SuppressSpecifiers && D->isModulePrivate())
-    Out << "__module_private__ ";
+    switch (D->getTSCSpec()) {
+    case TSCS_unspecified:
+      break;
+    case TSCS___thread:
+      Out << "__thread ";
+      break;
+    case TSCS__Thread_local:
+      Out << "_Thread_local ";
+      break;
+    case TSCS_thread_local:
+      Out << "thread_local ";
+      break;
+    }
 
-  QualType T = D->getType();
-  if (ParmVarDecl *Parm = dyn_cast<ParmVarDecl>(D))
-    T = Parm->getOriginalType();
+    if (D->isModulePrivate())
+      Out << "__module_private__ ";
+  }
+
+  QualType T = D->getTypeSourceInfo()
+    ? D->getTypeSourceInfo()->getType()
+    : D->getASTContext().getUnqualifiedObjCPointerType(D->getType());
   T.print(Out, Policy, D->getName());
   Expr *Init = D->getInit();
   if (!Policy.SuppressInitializers && Init) {
     bool ImplicitInit = false;
-    if (CXXConstructExpr *Construct = dyn_cast<CXXConstructExpr>(Init))
-      ImplicitInit = D->getInitStyle() == VarDecl::CallInit &&
-          Construct->getNumArgs() == 0 && !Construct->isListInitialization();
+    if (CXXConstructExpr *Construct =
+            dyn_cast<CXXConstructExpr>(Init->IgnoreImplicit())) {
+      if (D->getInitStyle() == VarDecl::CallInit &&
+          !Construct->isListInitialization()) {
+        ImplicitInit = Construct->getNumArgs() == 0 ||
+          Construct->getArg(0)->isDefaultArgument();
+      }
+    }
     if (!ImplicitInit) {
       if ((D->getInitStyle() == VarDecl::CallInit) && !isa<ParenListExpr>(Init))
         Out << "(";
@@ -711,6 +746,10 @@ void DeclPrinter::VisitNamespaceAliasDecl(NamespaceAliasDecl *D) {
   Out << *D->getAliasedNamespace();
 }
 
+void DeclPrinter::VisitEmptyDecl(EmptyDecl *D) {
+  prettyPrintAttributes(D);
+}
+
 void DeclPrinter::VisitCXXRecordDecl(CXXRecordDecl *D) {
   if (!Policy.SuppressSpecifiers && D->isModulePrivate())
     Out << "__module_private__ ";
@@ -767,8 +806,8 @@ void DeclPrinter::VisitLinkageSpecDecl(LinkageSpecDecl *D) {
     Visit(*D->decls_begin());
 }
 
-void DeclPrinter::PrintTemplateParameters(
-    const TemplateParameterList *Params, const TemplateArgumentList *Args = 0) {
+void DeclPrinter::PrintTemplateParameters(const TemplateParameterList *Params,
+                                          const TemplateArgumentList *Args) {
   assert(Params);
   assert(!Args || Params->size() == Args->size());
 
@@ -879,7 +918,8 @@ void DeclPrinter::VisitObjCMethodDecl(ObjCMethodDecl *OMD) {
   else
     Out << "+ ";
   if (!OMD->getResultType().isNull())
-    Out << '(' << OMD->getResultType().getAsString(Policy) << ")";
+    Out << '(' << OMD->getASTContext().getUnqualifiedObjCPointerType(OMD->getResultType()).
+                    getAsString(Policy) << ")";
 
   std::string name = OMD->getSelector().getAsString();
   std::string::size_type pos, lastPos = 0;
@@ -888,7 +928,8 @@ void DeclPrinter::VisitObjCMethodDecl(ObjCMethodDecl *OMD) {
     // FIXME: selector is missing here!
     pos = name.find_first_of(':', lastPos);
     Out << " " << name.substr(lastPos, pos - lastPos);
-    Out << ":(" << (*PI)->getType().getAsString(Policy) << ')' << **PI;
+    Out << ":(" << (*PI)->getASTContext().getUnqualifiedObjCPointerType((*PI)->getType()).
+                      getAsString(Policy) << ')' << **PI;
     lastPos = pos + 1;
   }
 
@@ -921,7 +962,8 @@ void DeclPrinter::VisitObjCImplementationDecl(ObjCImplementationDecl *OID) {
     Indentation += Policy.Indentation;
     for (ObjCImplementationDecl::ivar_iterator I = OID->ivar_begin(),
          E = OID->ivar_end(); I != E; ++I) {
-      Indent() << I->getType().getAsString(Policy) << ' ' << **I << ";\n";
+      Indent() << I->getASTContext().getUnqualifiedObjCPointerType(I->getType()).
+                    getAsString(Policy) << ' ' << **I << ";\n";
     }
     Indentation -= Policy.Indentation;
     Out << "}\n";
@@ -959,7 +1001,8 @@ void DeclPrinter::VisitObjCInterfaceDecl(ObjCInterfaceDecl *OID) {
     Indentation += Policy.Indentation;
     for (ObjCInterfaceDecl::ivar_iterator I = OID->ivar_begin(),
          E = OID->ivar_end(); I != E; ++I) {
-      Indent() << I->getType().getAsString(Policy) << ' ' << **I << ";\n";
+      Indent() << I->getASTContext().getUnqualifiedObjCPointerType(I->getType()).
+                    getAsString(Policy) << ' ' << **I << ";\n";
     }
     Indentation -= Policy.Indentation;
     Out << "}\n";
@@ -1010,7 +1053,8 @@ void DeclPrinter::VisitObjCCategoryDecl(ObjCCategoryDecl *PID) {
     Indentation += Policy.Indentation;
     for (ObjCCategoryDecl::ivar_iterator I = PID->ivar_begin(),
          E = PID->ivar_end(); I != E; ++I) {
-      Indent() << I->getType().getAsString(Policy) << ' ' << **I << ";\n";
+      Indent() << I->getASTContext().getUnqualifiedObjCPointerType(I->getType()).
+                    getAsString(Policy) << ' ' << **I << ";\n";
     }
     Indentation -= Policy.Indentation;
     Out << "}\n";
@@ -1096,7 +1140,8 @@ void DeclPrinter::VisitObjCPropertyDecl(ObjCPropertyDecl *PDecl) {
     (void) first; // Silence dead store warning due to idiomatic code.
     Out << " )";
   }
-  Out << ' ' << PDecl->getType().getAsString(Policy) << ' ' << *PDecl;
+  Out << ' ' << PDecl->getASTContext().getUnqualifiedObjCPointerType(PDecl->getType()).
+                  getAsString(Policy) << ' ' << *PDecl;
   if (Policy.PolishForDeclaration)
     Out << ';';
 }
@@ -1112,7 +1157,10 @@ void DeclPrinter::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *PID) {
 }
 
 void DeclPrinter::VisitUsingDecl(UsingDecl *D) {
-  Out << "using ";
+  if (!D->isAccessDeclaration())
+    Out << "using ";
+  if (D->hasTypename())
+    Out << "typename ";
   D->getQualifier()->print(Out, Policy);
   Out << *D;
 }
@@ -1125,7 +1173,8 @@ DeclPrinter::VisitUnresolvedUsingTypenameDecl(UnresolvedUsingTypenameDecl *D) {
 }
 
 void DeclPrinter::VisitUnresolvedUsingValueDecl(UnresolvedUsingValueDecl *D) {
-  Out << "using ";
+  if (!D->isAccessDeclaration())
+    Out << "using ";
   D->getQualifier()->print(Out, Policy);
   Out << D->getName();
 }
@@ -1133,3 +1182,18 @@ void DeclPrinter::VisitUnresolvedUsingValueDecl(UnresolvedUsingValueDecl *D) {
 void DeclPrinter::VisitUsingShadowDecl(UsingShadowDecl *D) {
   // ignore
 }
+
+void DeclPrinter::VisitOMPThreadPrivateDecl(OMPThreadPrivateDecl *D) {
+  Out << "#pragma omp threadprivate";
+  if (!D->varlist_empty()) {
+    for (OMPThreadPrivateDecl::varlist_iterator I = D->varlist_begin(),
+                                                E = D->varlist_end();
+                                                I != E; ++I) {
+      Out << (I == D->varlist_begin() ? '(' : ',');
+      NamedDecl *ND = cast<NamedDecl>(cast<DeclRefExpr>(*I)->getDecl());
+      ND->printQualifiedName(Out);
+    }
+    Out << ")";
+  }
+}
+

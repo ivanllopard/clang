@@ -52,7 +52,7 @@ NumConstraints
 /// AnalysisDiagClients - Set of available diagnostic clients for rendering
 ///  analysis results.
 enum AnalysisDiagClients {
-#define ANALYSIS_DIAGNOSTICS(NAME, CMDFLAG, DESC, CREATFN, AUTOCREAT) PD_##NAME,
+#define ANALYSIS_DIAGNOSTICS(NAME, CMDFLAG, DESC, CREATFN) PD_##NAME,
 #include "clang/StaticAnalyzer/Core/Analyses.def"
 NUM_ANALYSIS_DIAG_CLIENTS
 };
@@ -132,9 +132,6 @@ public:
   
   std::string AnalyzeSpecificFunction;
   
-  /// \brief The maximum number of exploded nodes the analyzer will generate.
-  unsigned MaxNodes;
-  
   /// \brief The maximum number of times the analyzer visits a block.
   unsigned maxBlockVisitOnPath;
   
@@ -169,9 +166,6 @@ public:
   unsigned InlineMaxStackDepth;
   
   /// \brief The mode of function selection used during inlining.
-  unsigned InlineMaxFunctionSize;
-
-  /// \brief The mode of function selection used during inlining.
   AnalysisInliningMode InliningMode;
 
 private:
@@ -196,33 +190,55 @@ private:
   CXXInlineableMemberKind CXXMemberInliningMode;
   
   /// \sa includeTemporaryDtorsInCFG
-  llvm::Optional<bool> IncludeTemporaryDtorsInCFG;
+  Optional<bool> IncludeTemporaryDtorsInCFG;
   
   /// \sa mayInlineCXXStandardLibrary
-  llvm::Optional<bool> InlineCXXStandardLibrary;
+  Optional<bool> InlineCXXStandardLibrary;
   
   /// \sa mayInlineTemplateFunctions
-  llvm::Optional<bool> InlineTemplateFunctions;
+  Optional<bool> InlineTemplateFunctions;
+
+  /// \sa mayInlineCXXContainerCtorsAndDtors
+  Optional<bool> InlineCXXContainerCtorsAndDtors;
+
+  /// \sa mayInlineCXXSharedPtrDtor
+  Optional<bool> InlineCXXSharedPtrDtor;
 
   /// \sa mayInlineObjCMethod
-  llvm::Optional<bool> ObjCInliningMode;
+  Optional<bool> ObjCInliningMode;
 
   // Cache of the "ipa-always-inline-size" setting.
   // \sa getAlwaysInlineSize
-  llvm::Optional<unsigned> AlwaysInlineSize;
+  Optional<unsigned> AlwaysInlineSize;
 
   /// \sa shouldSuppressNullReturnPaths
-  llvm::Optional<bool> SuppressNullReturnPaths;
+  Optional<bool> SuppressNullReturnPaths;
+
+  // \sa getMaxInlinableSize
+  Optional<unsigned> MaxInlinableSize;
 
   /// \sa shouldAvoidSuppressingNullArgumentPaths
-  llvm::Optional<bool> AvoidSuppressingNullArgumentPaths;
+  Optional<bool> AvoidSuppressingNullArgumentPaths;
+
+  /// \sa shouldSuppressInlinedDefensiveChecks
+  Optional<bool> SuppressInlinedDefensiveChecks;
+
+  /// \sa shouldSuppressFromCXXStandardLibrary
+  Optional<bool> SuppressFromCXXStandardLibrary;
+
+  /// \sa reportIssuesInMainSourceFile
+  Optional<bool> ReportIssuesInMainSourceFile;
 
   /// \sa getGraphTrimInterval
-  llvm::Optional<unsigned> GraphTrimInterval;
+  Optional<unsigned> GraphTrimInterval;
 
   /// \sa getMaxTimesInlineLarge
-  llvm::Optional<unsigned> MaxTimesInlineLarge;
+  Optional<unsigned> MaxTimesInlineLarge;
 
+  /// \sa getMaxNodesPerTopLevelFunction
+  Optional<unsigned> MaxNodesPerTopLevelFunction;
+
+public:
   /// Interprets an option's string value as a boolean.
   ///
   /// Accepts the strings "true" and "false".
@@ -230,13 +246,11 @@ private:
   bool getBooleanOption(StringRef Name, bool DefaultVal);
 
   /// Variant that accepts a Optional value to cache the result.
-  bool getBooleanOption(llvm::Optional<bool> &V, StringRef Name,
-                        bool DefaultVal);
-  
+  bool getBooleanOption(Optional<bool> &V, StringRef Name, bool DefaultVal);
+
   /// Interprets an option's string value as an integer value.
   int getOptionAsInteger(StringRef Name, int DefaultVal);
 
-public:
   /// \brief Retrieves and sets the UserMode. This is a high-level option,
   /// which is used to set other low-level options. It is not accessible
   /// outside of AnalyzerOptions.
@@ -276,6 +290,23 @@ public:
   /// accepts the values "true" and "false".
   bool mayInlineTemplateFunctions();
 
+  /// Returns whether or not constructors and destructors of C++ container
+  /// objects may be considered for inlining.
+  ///
+  /// This is controlled by the 'c++-container-inlining' config option, which
+  /// accepts the values "true" and "false".
+  bool mayInlineCXXContainerCtorsAndDtors();
+
+  /// Returns whether or not the destructor of C++ 'shared_ptr' may be
+  /// considered for inlining.
+  ///
+  /// This covers std::shared_ptr, std::tr1::shared_ptr, and boost::shared_ptr,
+  /// and indeed any destructor named "~shared_ptr".
+  ///
+  /// This is controlled by the 'c++-shared_ptr-inlining' config option, which
+  /// accepts the values "true" and "false".
+  bool mayInlineCXXSharedPtrDtor();
+
   /// Returns whether or not paths that go through null returns should be
   /// suppressed.
   ///
@@ -297,6 +328,27 @@ public:
   /// option, which accepts the values "true" and "false".
   bool shouldAvoidSuppressingNullArgumentPaths();
 
+  /// Returns whether or not diagnostics containing inlined defensive NULL
+  /// checks should be suppressed.
+  ///
+  /// This is controlled by the 'suppress-inlined-defensive-checks' config
+  /// option, which accepts the values "true" and "false".
+  bool shouldSuppressInlinedDefensiveChecks();
+
+  /// Returns whether or not diagnostics reported within the C++ standard
+  /// library should be suppressed.
+  ///
+  /// This is controlled by the 'suppress-c++-stdlib' config option,
+  /// which accepts the values "true" and "false".
+  bool shouldSuppressFromCXXStandardLibrary();
+
+  /// Returns whether or not the diagnostic report should be always reported
+  /// in the main source file and not the headers.
+  ///
+  /// This is controlled by the 'report-in-main-source-file' config option,
+  /// which accepts the values "true" and "false".
+  bool shouldReportIssuesInMainSourceFile();
+
   /// Returns whether irrelevant parts of a bug report path should be pruned
   /// out of the final output.
   ///
@@ -304,12 +356,22 @@ public:
   /// values "true" and "false".
   bool shouldPrunePaths();
 
+  /// Returns true if 'static' initializers should be in conditional logic
+  /// in the CFG.
+  bool shouldConditionalizeStaticInitializers();
+
   // Returns the size of the functions (in basic blocks), which should be
   // considered to be small enough to always inline.
   //
   // This is controlled by "ipa-always-inline-size" analyzer-config option.
   unsigned getAlwaysInlineSize();
-  
+
+  // Returns the bound on the number of basic blocks in an inlined function
+  // (50 by default).
+  //
+  // This is controlled by "-analyzer-config max-inlinable-size" option.
+  unsigned getMaxInlinableSize();
+
   /// Returns true if the analyzer engine should synthesize fake bodies
   /// for well-known functions.
   bool shouldSynthesizeBodies();
@@ -325,6 +387,13 @@ public:
   ///
   /// This is controlled by the 'max-times-inline-large' config option.
   unsigned getMaxTimesInlineLarge();
+
+  /// Returns the maximum number of nodes the analyzer can generate while
+  /// exploring a top level function (for each exploded graph).
+  /// 150000 is default; 0 means no limit.
+  ///
+  /// This is controlled by the 'max-nodes' config option.
+  unsigned getMaxNodesPerTopLevelFunction();
 
 public:
   AnalyzerOptions() :
@@ -345,7 +414,6 @@ public:
     NoRetryExhausted(0),
     // Cap the stack depth at 4 calls (5 stack frames, base + 4 calls).
     InlineMaxStackDepth(5),
-    InlineMaxFunctionSize(50),
     InliningMode(NoRedundancy),
     UserMode(UMK_NotSet),
     IPAMode(IPAK_NotSet),

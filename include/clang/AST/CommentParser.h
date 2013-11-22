@@ -61,10 +61,8 @@ class Parser {
   void consumeToken() {
     if (MoreLATokens.empty())
       L.lex(Tok);
-    else {
-      Tok = MoreLATokens.back();
-      MoreLATokens.pop_back();
-    }
+    else
+      Tok = MoreLATokens.pop_back_val();
   }
 
   void putBack(const Token &OldTok) {
@@ -87,7 +85,7 @@ class Parser {
   }
 
   bool isTokBlockCommand() {
-    return Tok.is(tok::command) &&
+    return (Tok.is(tok::backslash_command) || Tok.is(tok::at_command)) &&
            Traits.getCommandInfo(Tok.getCommandID())->IsBlockCommand;
   }
 

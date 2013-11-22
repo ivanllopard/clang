@@ -1,7 +1,7 @@
-// RUN: clang-check "%s" -- -no-integrated-as -c 2>&1 | FileCheck %s
+// RUN: not clang-check "%s" -- -no-integrated-as -c 2>&1 | FileCheck %s
 
 // CHECK: C++ requires
 invalid;
 
-// FIXME: This is incompatible to -fms-compatibility.
+// MSVC targeted drivers (*-win32) are incapable of invoking external assembler.
 // XFAIL: win32

@@ -2,7 +2,7 @@
 // RUN: cp %s %t
 // RUN: not %clang_cc1 -x c++ -std=c++11 -fixit %t
 // RUN: %clang_cc1 -Wall -pedantic -x c++ -std=c++11 %t
-// RUN: %clang_cc1 -std=c++11 -fsyntax-only -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s
+// RUN: not %clang_cc1 -std=c++11 -fsyntax-only -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s
 
 namespace ClassSpecifier {
   class [[]] [[]]
@@ -31,4 +31,21 @@ namespace ClassSpecifier {
     // CHECK: fix-it:{{.*}}:{28:5-28:27}
     // CHECK: fix-it:{{.*}}:{27:19-27:19}
     // CHECK: fix-it:{{.*}}:{29:5-29:31}
+}
+
+namespace BaseSpecifier {
+  struct base1 {};
+  struct base2 {};
+  class with_base_spec : public [[a]] // expected-error {{an attribute list cannot appear here}} expected-warning {{unknown}}
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-1]]:26-[[@LINE-1]]:26}:"[{{\[}}a]]"
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-2]]:33-[[@LINE-2]]:39}:""
+                         virtual [[b]] base1, // expected-error {{an attribute list cannot appear here}} expected-warning {{unknown}}
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-4]]:26-[[@LINE-4]]:26}:"[{{\[}}b]]"
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-2]]:34-[[@LINE-2]]:40}:""
+                         virtual [[c]] // expected-error {{an attribute list cannot appear here}} expected-warning {{unknown}}
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-1]]:26-[[@LINE-1]]:26}:"[{{\[}}c]]"
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-2]]:34-[[@LINE-2]]:40}:""
+                         public [[d]] base2 {}; // expected-error {{an attribute list cannot appear here}} expected-warning {{unknown}}
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-4]]:26-[[@LINE-4]]:26}:"[{{\[}}d]]"
+  // CHECK: fix-it:"{{.*}}":{[[@LINE-2]]:33-[[@LINE-2]]:39}:""
 }

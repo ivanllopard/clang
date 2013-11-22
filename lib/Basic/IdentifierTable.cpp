@@ -14,12 +14,11 @@
 
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LangOptions.h"
+#include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include <cctype>
 #include <cstdio>
 
 using namespace clang;
@@ -65,7 +64,7 @@ namespace {
   };
 }
 
-IdentifierIterator *IdentifierInfoLookup::getIdentifiers() const {
+IdentifierIterator *IdentifierInfoLookup::getIdentifiers() {
   return new EmptyLookupIterator();
 }
 
@@ -404,9 +403,8 @@ std::string Selector::getAsString() const {
 /// given "word", which is assumed to end in a lowercase letter.
 static bool startsWithWord(StringRef name, StringRef word) {
   if (name.size() < word.size()) return false;
-  return ((name.size() == word.size() ||
-           !islower(name[word.size()]))
-          && name.startswith(word));
+  return ((name.size() == word.size() || !isLowercase(name[word.size()])) &&
+          name.startswith(word));
 }
 
 ObjCMethodFamily Selector::getMethodFamilyImpl(Selector sel) {
@@ -454,6 +452,32 @@ ObjCMethodFamily Selector::getMethodFamilyImpl(Selector sel) {
   return OMF_None;
 }
 
+ObjCInstanceTypeFamily Selector::getInstTypeMethodFamily(Selector sel) {
+  IdentifierInfo *first = sel.getIdentifierInfoForSlot(0);
+  if (!first) return OIT_None;
+  
+  StringRef name = first->getName();
+  
+  if (name.empty()) return OIT_None;
+  switch (name.front()) {
+    case 'a':
+      if (startsWithWord(name, "array")) return OIT_Array;
+      break;
+    case 'd':
+      if (startsWithWord(name, "default")) return OIT_ReturnsSelf;
+      if (startsWithWord(name, "dictionary")) return OIT_Dictionary;
+      break;
+    case 's':
+      if (startsWithWord(name, "shared")) return OIT_ReturnsSelf;
+      if (startsWithWord(name, "standard")) return OIT_Singleton;
+    case 'i':
+      if (startsWithWord(name, "init")) return OIT_Init;
+    default:
+      break;
+  }
+  return OIT_None;
+}
+
 namespace {
   struct SelectorTableImpl {
     llvm::FoldingSet<MultiKeywordSelector> Table;
@@ -465,15 +489,20 @@ static SelectorTableImpl &getSelectorTableImpl(void *P) {
   return *static_cast<SelectorTableImpl*>(P);
 }
 
-/*static*/ Selector
-SelectorTable::constructSetterName(IdentifierTable &Idents,
-                                   SelectorTable &SelTable,
-                                   const IdentifierInfo *Name) {
-  SmallString<100> SelectorName;
-  SelectorName = "set";
-  SelectorName += Name->getName();
-  SelectorName[3] = toupper(SelectorName[3]);
-  IdentifierInfo *SetterName = &Idents.get(SelectorName);
+SmallString<64>
+SelectorTable::constructSetterName(StringRef Name) {
+  SmallString<64> SetterName("set");
+  SetterName += Name;
+  SetterName[3] = toUppercase(SetterName[3]);
+  return SetterName;
+}
+
+Selector
+SelectorTable::constructSetterSelector(IdentifierTable &Idents,
+                                       SelectorTable &SelTable,
+                                       const IdentifierInfo *Name) {
+  IdentifierInfo *SetterName =
+    &Idents.get(constructSetterName(Name->getName()));
   return SelTable.getUnarySelector(SetterName);
 }
 

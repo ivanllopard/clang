@@ -63,6 +63,14 @@ public:
     ///   - constructor/destructor signatures.
     iOS,
 
+    /// The generic AArch64 ABI is also a modified version of the Itanium ABI,
+    /// but it has fewer divergences than the 32-bit ARM ABI.
+    ///
+    /// The relevant changes from the generic ABI in this case are:
+    ///   - representation of member function pointers adjusted as in ARM.
+    ///   - guard variables  are smaller.
+    GenericAArch64,
+
     /// The Microsoft ABI is the ABI used by Microsoft Visual Studio (and
     /// compatible compilers).
     ///
@@ -93,6 +101,7 @@ public:
   /// \brief Does this ABI generally fall into the Itanium family of ABIs?
   bool isItaniumFamily() const {
     switch (getKind()) {
+    case GenericAArch64:
     case GenericItanium:
     case GenericARM:
     case iOS:
@@ -107,6 +116,7 @@ public:
   /// \brief Is this ABI an MSVC-compatible ABI?
   bool isMicrosoft() const {
     switch (getKind()) {
+    case GenericAArch64:
     case GenericItanium:
     case GenericARM:
     case iOS:
@@ -121,8 +131,19 @@ public:
   /// \brief Is the default C++ member function calling convention
   /// the same as the default calling convention?
   bool isMemberFunctionCCDefault() const {
-    // Right now, this is always true for Microsoft.
+    // Right now, this is always false for Microsoft.
     return !isMicrosoft();
+  }
+
+  /// Are temporary objects passed by value to a call destroyed by the callee?
+  /// This is a fundamental language change, since it implies that objects
+  /// passed by value do *not* live to the end of the full expression.
+  /// Temporaries passed to a function taking a const reference live to the end
+  /// of the full expression as usual.  Both the caller and the callee must
+  /// have access to the destructor, while only the caller needs the
+  /// destructor if this is false.
+  bool isArgumentDestroyedByCallee() const {
+    return isMicrosoft();
   }
 
   /// \brief Does this ABI have different entrypoints for complete-object
@@ -131,14 +152,15 @@ public:
     return isItaniumFamily();
   }
 
-  /// \brief Does this ABI have different entrypoints for complete-object
-  /// and base-subobject destructors?
-  bool hasDestructorVariants() const {
+  /// \brief Does this ABI allow virtual bases to be primary base classes?
+  bool hasPrimaryVBases() const {
     return isItaniumFamily();
   }
 
-  /// \brief Does this ABI allow virtual bases to be primary base classes?
-  bool hasPrimaryVBases() const {
+  /// \brief Does this ABI use key functions?  If so, class data such as the
+  /// vtable is emitted with strong linkage by the TU containing the key
+  /// function.
+  bool hasKeyFunctions() const {
     return isItaniumFamily();
   }
 
@@ -175,10 +197,61 @@ public:
     case GenericARM:
       return false;
 
+    case GenericAArch64:
     case GenericItanium:
     case iOS:   // old iOS compilers did not follow this rule
     case Microsoft:
       return true;
+    }
+    llvm_unreachable("bad ABI kind");
+  }
+
+  /// When is record layout allowed to allocate objects in the tail
+  /// padding of a base class?
+  ///
+  /// This decision cannot be changed without breaking platform ABI
+  /// compatibility, and yet it is tied to language guarantees which
+  /// the committee has so far seen fit to strengthen no less than
+  /// three separate times:
+  ///   - originally, there were no restrictions at all;
+  ///   - C++98 declared that objects could not be allocated in the
+  ///     tail padding of a POD type;
+  ///   - C++03 extended the definition of POD to include classes
+  ///     containing member pointers; and
+  ///   - C++11 greatly broadened the definition of POD to include
+  ///     all trivial standard-layout classes.
+  /// Each of these changes technically took several existing
+  /// platforms and made them permanently non-conformant.
+  enum TailPaddingUseRules {
+    /// The tail-padding of a base class is always theoretically
+    /// available, even if it's POD.  This is not strictly conforming
+    /// in any language mode.
+    AlwaysUseTailPadding,
+
+    /// Only allocate objects in the tail padding of a base class if
+    /// the base class is not POD according to the rules of C++ TR1.
+    /// This is non strictly conforming in C++11 mode.
+    UseTailPaddingUnlessPOD03,
+
+    /// Only allocate objects in the tail padding of a base class if
+    /// the base class is not POD according to the rules of C++11.
+    UseTailPaddingUnlessPOD11
+  };
+  TailPaddingUseRules getTailPaddingUseRules() const {
+    switch (getKind()) {
+    // To preserve binary compatibility, the generic Itanium ABI has
+    // permanently locked the definition of POD to the rules of C++ TR1,
+    // and that trickles down to all the derived ABIs.
+    case GenericItanium:
+    case GenericAArch64:
+    case GenericARM:
+    case iOS:
+      return UseTailPaddingUnlessPOD03;
+
+    // MSVC always allocates fields in the tail-padding of a base class
+    // subobject, even if they're POD.
+    case Microsoft:
+      return AlwaysUseTailPadding;
     }
     llvm_unreachable("bad ABI kind");
   }

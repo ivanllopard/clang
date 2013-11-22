@@ -85,7 +85,11 @@ static CXTypeKind GetTypeKind(QualType T) {
     TKCASE(FunctionNoProto);
     TKCASE(FunctionProto);
     TKCASE(ConstantArray);
+    TKCASE(IncompleteArray);
+    TKCASE(VariableArray);
+    TKCASE(DependentSizedArray);
     TKCASE(Vector);
+    TKCASE(MemberPointer);
     default:
       return CXType_Unexposed;
   }
@@ -106,6 +110,11 @@ CXType cxtype::MakeCXType(QualType T, CXTranslationUnit TU) {
         TK = CXType_ObjCClass;
       else if (Ctx.isObjCSelType(UnqualT))
         TK = CXType_ObjCSel;
+    }
+
+    /* Handle decayed types as the original type */
+    if (const DecayedType *DT = T->getAs<DecayedType>()) {
+      return MakeCXType(DT->getOriginalType(), TU);
     }
   }
   if (TK == CXType_Invalid)
@@ -149,12 +158,20 @@ CXType clang_getCursorType(CXCursor C) {
       return MakeCXType(Context.getTypeDeclType(TD), TU);
     if (const ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(D))
       return MakeCXType(Context.getObjCInterfaceType(ID), TU);
+    if (const DeclaratorDecl *DD = dyn_cast<DeclaratorDecl>(D)) {
+      if (TypeSourceInfo *TSInfo = DD->getTypeSourceInfo())
+        return MakeCXType(TSInfo->getType(), TU);
+      return MakeCXType(DD->getType(), TU);      
+    }
     if (const ValueDecl *VD = dyn_cast<ValueDecl>(D))
       return MakeCXType(VD->getType(), TU);
     if (const ObjCPropertyDecl *PD = dyn_cast<ObjCPropertyDecl>(D))
       return MakeCXType(PD->getType(), TU);
-    if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
-      return MakeCXType(FD->getType(), TU);
+    if (const FunctionTemplateDecl *FTD = dyn_cast<FunctionTemplateDecl>(D)) {
+      if (TypeSourceInfo *TSInfo = FTD->getTemplatedDecl()->getTypeSourceInfo())
+        return MakeCXType(TSInfo->getType(), TU);
+      return MakeCXType(FTD->getTemplatedDecl()->getType(), TU);
+    }
     return MakeCXType(QualType(), TU);
   }
   
@@ -198,6 +215,21 @@ CXType clang_getCursorType(CXCursor C) {
   }
 
   return MakeCXType(QualType(), TU);
+}
+
+CXString clang_getTypeSpelling(CXType CT) {
+  QualType T = GetQualType(CT);
+  if (T.isNull())
+    return cxstring::createEmpty();
+
+  CXTranslationUnit TU = GetTU(CT);
+  SmallString<64> Str;
+  llvm::raw_svector_ostream OS(Str);
+  PrintingPolicy PP(cxtu::getASTUnit(TU)->getASTContext().getLangOpts());
+
+  T.print(OS, PP);
+
+  return cxstring::createDup(OS.str());
 }
 
 CXType clang_getTypedefDeclUnderlyingType(CXCursor C) {
@@ -334,6 +366,9 @@ CXType clang_getPointeeType(CXType CT) {
     case Type::ObjCObjectPointer:
       T = cast<ObjCObjectPointerType>(TP)->getPointeeType();
       break;
+    case Type::MemberPointer:
+      T = cast<MemberPointerType>(TP)->getPointeeType();
+      break;
     default:
       T = QualType();
       break;
@@ -443,10 +478,14 @@ CXString clang_getTypeKindSpelling(enum CXTypeKind K) {
     TKIND(FunctionNoProto);
     TKIND(FunctionProto);
     TKIND(ConstantArray);
+    TKIND(IncompleteArray);
+    TKIND(VariableArray);
+    TKIND(DependentSizedArray);
     TKIND(Vector);
+    TKIND(MemberPointer);
   }
 #undef TKIND
-  return cxstring::createCXString(s);
+  return cxstring::createRef(s);
 }
 
 unsigned clang_equalTypes(CXType A, CXType B) {
@@ -475,12 +514,13 @@ CXCallingConv clang_getFunctionTypeCallingConv(CXType X) {
   if (const FunctionType *FD = T->getAs<FunctionType>()) {
 #define TCALLINGCONV(X) case CC_##X: return CXCallingConv_##X
     switch (FD->getCallConv()) {
-      TCALLINGCONV(Default);
       TCALLINGCONV(C);
       TCALLINGCONV(X86StdCall);
       TCALLINGCONV(X86FastCall);
       TCALLINGCONV(X86ThisCall);
       TCALLINGCONV(X86Pascal);
+      TCALLINGCONV(X86_64Win64);
+      TCALLINGCONV(X86_64SysV);
       TCALLINGCONV(AAPCS);
       TCALLINGCONV(AAPCS_VFP);
       TCALLINGCONV(PnaclCall);
@@ -567,6 +607,15 @@ CXType clang_getElementType(CXType CT) {
     case Type::ConstantArray:
       ET = cast<ConstantArrayType> (TP)->getElementType();
       break;
+    case Type::IncompleteArray:
+      ET = cast<IncompleteArrayType> (TP)->getElementType();
+      break;
+    case Type::VariableArray:
+      ET = cast<VariableArrayType> (TP)->getElementType();
+      break;
+    case Type::DependentSizedArray:
+      ET = cast<DependentSizedArrayType> (TP)->getElementType();
+      break;
     case Type::Vector:
       ET = cast<VectorType> (TP)->getElementType();
       break;
@@ -610,6 +659,15 @@ CXType clang_getArrayElementType(CXType CT) {
     case Type::ConstantArray:
       ET = cast<ConstantArrayType> (TP)->getElementType();
       break;
+    case Type::IncompleteArray:
+      ET = cast<IncompleteArrayType> (TP)->getElementType();
+      break;
+    case Type::VariableArray:
+      ET = cast<VariableArrayType> (TP)->getElementType();
+      break;
+    case Type::DependentSizedArray:
+      ET = cast<DependentSizedArrayType> (TP)->getElementType();
+      break;
     default:
       break;
     }
@@ -634,18 +692,168 @@ long long clang_getArraySize(CXType CT) {
   return result;
 }
 
+long long clang_Type_getAlignOf(CXType T) {
+  if (T.kind == CXType_Invalid)
+    return CXTypeLayoutError_Invalid;
+  ASTContext &Ctx = cxtu::getASTUnit(GetTU(T))->getASTContext();
+  QualType QT = GetQualType(T);
+  // [expr.alignof] p1: return size_t value for complete object type, reference
+  //                    or array.
+  // [expr.alignof] p3: if reference type, return size of referenced type
+  if (QT->isReferenceType())
+    QT = QT.getNonReferenceType();
+  if (QT->isIncompleteType())
+    return CXTypeLayoutError_Incomplete;
+  if (QT->isDependentType())
+    return CXTypeLayoutError_Dependent;
+  // Exceptions by GCC extension - see ASTContext.cpp:1313 getTypeInfoImpl
+  // if (QT->isFunctionType()) return 4; // Bug #15511 - should be 1
+  // if (QT->isVoidType()) return 1;
+  return Ctx.getTypeAlignInChars(QT).getQuantity();
+}
+
+CXType clang_Type_getClassType(CXType CT) {
+  QualType ET = QualType();
+  QualType T = GetQualType(CT);
+  const Type *TP = T.getTypePtrOrNull();
+
+  if (TP && TP->getTypeClass() == Type::MemberPointer) {
+    ET = QualType(cast<MemberPointerType> (TP)->getClass(), 0);
+  }
+  return MakeCXType(ET, GetTU(CT));
+}
+
+long long clang_Type_getSizeOf(CXType T) {
+  if (T.kind == CXType_Invalid)
+    return CXTypeLayoutError_Invalid;
+  ASTContext &Ctx = cxtu::getASTUnit(GetTU(T))->getASTContext();
+  QualType QT = GetQualType(T);
+  // [expr.sizeof] p2: if reference type, return size of referenced type
+  if (QT->isReferenceType())
+    QT = QT.getNonReferenceType();
+  // [expr.sizeof] p1: return -1 on: func, incomplete, bitfield, incomplete
+  //                   enumeration
+  // Note: We get the cxtype, not the cxcursor, so we can't call
+  //       FieldDecl->isBitField()
+  // [expr.sizeof] p3: pointer ok, function not ok.
+  // [gcc extension] lib/AST/ExprConstant.cpp:1372 HandleSizeof : vla == error
+  if (QT->isIncompleteType())
+    return CXTypeLayoutError_Incomplete;
+  if (QT->isDependentType())
+    return CXTypeLayoutError_Dependent;
+  if (!QT->isConstantSizeType())
+    return CXTypeLayoutError_NotConstantSize;
+  // [gcc extension] lib/AST/ExprConstant.cpp:1372
+  //                 HandleSizeof : {voidtype,functype} == 1
+  // not handled by ASTContext.cpp:1313 getTypeInfoImpl
+  if (QT->isVoidType() || QT->isFunctionType())
+    return 1;
+  return Ctx.getTypeSizeInChars(QT).getQuantity();
+}
+
+static long long visitRecordForValidation(const RecordDecl *RD) {
+  for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
+       I != E; ++I){
+    QualType FQT = (*I)->getType();
+    if (FQT->isIncompleteType())
+      return CXTypeLayoutError_Incomplete;
+    if (FQT->isDependentType())
+      return CXTypeLayoutError_Dependent;
+    // recurse
+    if (const RecordType *ChildType = (*I)->getType()->getAs<RecordType>()) {
+      if (const RecordDecl *Child = ChildType->getDecl()) {
+        long long ret = visitRecordForValidation(Child);
+        if (ret < 0)
+          return ret;
+      }
+    }
+    // else try next field
+  }
+  return 0;
+}
+
+long long clang_Type_getOffsetOf(CXType PT, const char *S) {
+  // check that PT is not incomplete/dependent
+  CXCursor PC = clang_getTypeDeclaration(PT);
+  if (clang_isInvalid(PC.kind))
+    return CXTypeLayoutError_Invalid;
+  const RecordDecl *RD =
+        dyn_cast_or_null<RecordDecl>(cxcursor::getCursorDecl(PC));
+  if (!RD || RD->isInvalidDecl())
+    return CXTypeLayoutError_Invalid;
+  RD = RD->getDefinition();
+  if (!RD)
+    return CXTypeLayoutError_Incomplete;
+  if (RD->isInvalidDecl())
+    return CXTypeLayoutError_Invalid;
+  QualType RT = GetQualType(PT);
+  if (RT->isIncompleteType())
+    return CXTypeLayoutError_Incomplete;
+  if (RT->isDependentType())
+    return CXTypeLayoutError_Dependent;
+  // We recurse into all record fields to detect incomplete and dependent types.
+  long long Error = visitRecordForValidation(RD);
+  if (Error < 0)
+    return Error;
+  if (!S)
+    return CXTypeLayoutError_InvalidFieldName;
+  // lookup field
+  ASTContext &Ctx = cxtu::getASTUnit(GetTU(PT))->getASTContext();
+  IdentifierInfo *II = &Ctx.Idents.get(S);
+  DeclarationName FieldName(II);
+  RecordDecl::lookup_const_result Res = RD->lookup(FieldName);
+  // If a field of the parent record is incomplete, lookup will fail.
+  // and we would return InvalidFieldName instead of Incomplete.
+  // But this erroneous results does protects again a hidden assertion failure
+  // in the RecordLayoutBuilder
+  if (Res.size() != 1)
+    return CXTypeLayoutError_InvalidFieldName;
+  if (const FieldDecl *FD = dyn_cast<FieldDecl>(Res.front()))
+    return Ctx.getFieldOffset(FD);
+  if (const IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(Res.front()))
+    return Ctx.getFieldOffset(IFD);
+  // we don't want any other Decl Type.
+  return CXTypeLayoutError_InvalidFieldName;
+}
+
+enum CXRefQualifierKind clang_Type_getCXXRefQualifier(CXType T) {
+  QualType QT = GetQualType(T);
+  if (QT.isNull())
+    return CXRefQualifier_None;
+  const FunctionProtoType *FD = QT->getAs<FunctionProtoType>();
+  if (!FD)
+    return CXRefQualifier_None;
+  switch (FD->getRefQualifier()) {
+    case RQ_None:
+      return CXRefQualifier_None;
+    case RQ_LValue:
+      return CXRefQualifier_LValue;
+    case RQ_RValue:
+      return CXRefQualifier_RValue;
+  }
+  return CXRefQualifier_None;
+}
+
+unsigned clang_Cursor_isBitField(CXCursor C) {
+  if (!clang_isDeclaration(C.kind))
+    return 0;
+  const FieldDecl *FD = dyn_cast_or_null<FieldDecl>(cxcursor::getCursorDecl(C));
+  if (!FD)
+    return 0;
+  return FD->isBitField();
+}
+
 CXString clang_getDeclObjCTypeEncoding(CXCursor C) {
   if (!clang_isDeclaration(C.kind))
-    return cxstring::createCXString("");
+    return cxstring::createEmpty();
 
-  const Decl *D = static_cast<const Decl*>(C.data[0]);
-  ASTUnit *AU = cxcursor::getCursorASTUnit(C);
-  ASTContext &Ctx = AU->getASTContext();
+  const Decl *D = cxcursor::getCursorDecl(C);
+  ASTContext &Ctx = cxcursor::getCursorContext(C);
   std::string encoding;
 
   if (const ObjCMethodDecl *OMD = dyn_cast<ObjCMethodDecl>(D))  {
     if (Ctx.getObjCEncodingForMethodDecl(OMD, encoding))
-      return cxstring::createCXString("?");
+      return cxstring::createRef("?");
   } else if (const ObjCPropertyDecl *OPD = dyn_cast<ObjCPropertyDecl>(D))
     Ctx.getObjCEncodingForPropertyDecl(OPD, NULL, encoding);
   else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
@@ -656,11 +864,11 @@ CXString clang_getDeclObjCTypeEncoding(CXCursor C) {
       Ty = Ctx.getTypeDeclType(TD);
     if (const ValueDecl *VD = dyn_cast<ValueDecl>(D))
       Ty = VD->getType();
-    else return cxstring::createCXString("?");
+    else return cxstring::createRef("?");
     Ctx.getObjCEncodingForType(Ty, encoding);
   }
 
-  return cxstring::createCXString(encoding);
+  return cxstring::createDup(encoding);
 }
 
 } // end: extern "C"

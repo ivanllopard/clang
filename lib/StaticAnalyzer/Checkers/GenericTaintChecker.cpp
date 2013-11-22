@@ -431,7 +431,7 @@ SymbolRef GenericTaintChecker::getPointedToSymbol(CheckerContext &C,
   if (AddrVal.isUnknownOrUndef())
     return 0;
 
-  Loc *AddrLoc = dyn_cast<Loc>(&AddrVal);
+  Optional<Loc> AddrLoc = AddrVal.getAs<Loc>();
   if (!AddrLoc)
     return 0;
 
@@ -619,7 +619,8 @@ static bool getPrintfFormatArgumentNum(const CallExpr *CE,
 
     const FormatAttr *Format = *i;
     ArgNum = Format->getFormatIdx() - 1;
-    if ((Format->getType() == "printf") && CE->getNumArgs() > ArgNum)
+    if ((Format->getType()->getName() == "printf") &&
+         CE->getNumArgs() > ArgNum)
       return true;
   }
 

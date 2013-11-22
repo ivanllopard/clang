@@ -68,8 +68,7 @@ void testReferenceMember() {
 
 void testReferenceMember2() {
   int *p = 0;
-  // FIXME: We should warn here, since we're creating the reference here.
-  RefWrapper X(*p); // expected-warning@-12 {{Dereference of null pointer}}
+  RefWrapper X(*p); // expected-warning {{Forming reference to null pointer}}
 }
 
 
@@ -108,5 +107,39 @@ namespace DefaultConstructorWithCleanups {
   int test() {
     Wrapper w;
     return w.arr[0].value; // no-warning
+  }
+}
+
+namespace DefaultMemberInitializers {
+  struct Wrapper {
+    int value = 42;
+
+    Wrapper() {}
+    Wrapper(int x) : value(x) {}
+    Wrapper(bool) {}
+  };
+
+  void test() {
+    Wrapper w1;
+    clang_analyzer_eval(w1.value == 42); // expected-warning{{TRUE}}
+
+    Wrapper w2(50);
+    clang_analyzer_eval(w2.value == 50); // expected-warning{{TRUE}}
+
+    Wrapper w3(false);
+    clang_analyzer_eval(w3.value == 42); // expected-warning{{TRUE}}
+  }
+
+  struct StringWrapper {
+    const char s[4] = "abc";
+    const char *p = "xyz";
+
+    StringWrapper(bool) {}
+  };
+
+  void testString() {
+    StringWrapper w(true);
+    clang_analyzer_eval(w.s[1] == 'b'); // expected-warning{{TRUE}}
+    clang_analyzer_eval(w.p[1] == 'y'); // expected-warning{{TRUE}}
   }
 }

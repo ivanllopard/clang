@@ -20,8 +20,8 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/MacroInfo.h"
+#include "clang/Lex/ModuleMap.h"
 #include "clang/Lex/PPCallbacks.h"
-#include "clang/Lex/PPMutationListener.h"
 #include "clang/Lex/PTHLexer.h"
 #include "clang/Lex/PTHManager.h"
 #include "clang/Lex/TokenLexer.h"
@@ -160,6 +160,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// \brief True if pragmas are enabled.
   bool PragmasEnabled : 1;
 
+  /// \brief True if the current build action is a preprocessing action.
+  bool PreprocessedOutput : 1;
+
   /// \brief True if we are currently preprocessing a #if or #elif directive
   bool ParsingIfOrElifDirective;
 
@@ -219,7 +222,10 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
 
   /// \brief The module import path that we're currently processing.
   SmallVector<std::pair<IdentifierInfo *, SourceLocation>, 2> ModuleImportPath;
-  
+
+  /// \brief Whether the last token we lexed was an '@'.
+  bool LastTokenWasAt;
+
   /// \brief Whether the module import expectes an identifier next. Otherwise,
   /// it expects a '.' or ';'.
   bool ModuleImportExpectsIdentifier;
@@ -293,24 +299,19 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// encountered (e.g. a file is \#included, etc).
   PPCallbacks *Callbacks;
 
-  /// \brief Listener whose actions are invoked when an entity in the
-  /// preprocessor (e.g., a macro) that was loaded from an AST file is
-  /// later mutated.
-  PPMutationListener *Listener;
-
   struct MacroExpandsInfo {
     Token Tok;
-    MacroInfo *MI;
+    MacroDirective *MD;
     SourceRange Range;
-    MacroExpandsInfo(Token Tok, MacroInfo *MI, SourceRange Range)
-      : Tok(Tok), MI(MI), Range(Range) { }
+    MacroExpandsInfo(Token Tok, MacroDirective *MD, SourceRange Range)
+      : Tok(Tok), MD(MD), Range(Range) { }
   };
   SmallVector<MacroExpandsInfo, 2> DelayedMacroExpandsCallbacks;
 
   /// Macros - For each IdentifierInfo that was associated with a macro, we
   /// keep a mapping to the history of all macro definitions and #undefs in
   /// the reverse order (the latest one is in the head of the list).
-  llvm::DenseMap<const IdentifierInfo*, MacroInfo*> Macros;
+  llvm::DenseMap<const IdentifierInfo*, MacroDirective*> Macros;
   friend class ASTReader;
   
   /// \brief Macros that we want to warn because they are not used at the end
@@ -344,6 +345,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// Predefines - This string is the predefined macros that preprocessor
   /// should use from the command line etc.
   std::string Predefines;
+
+  /// \brief The file ID for the preprocessor predefines.
+  FileID PredefinesFileID;
 
   /// TokenLexerCache - Cache macro expanders to reduce malloc traffic.
   enum { TokenLexerCacheSize = 8 };
@@ -397,6 +401,14 @@ private:  // Cached tokens state.
   /// allocation.
   MacroInfoChain *MICache;
 
+  struct DeserializedMacroInfoChain {
+    MacroInfo MI;
+    unsigned OwningModuleID; // MUST be immediately after the MacroInfo object
+                     // so it can be accessed by MacroInfo::getOwningModuleID().
+    DeserializedMacroInfoChain *Next;
+  };
+  DeserializedMacroInfoChain *DeserialMIChainHead;
+
 public:
   Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
                DiagnosticsEngine &diags, LangOptions &opts,
@@ -449,6 +461,10 @@ public:
   /// \brief Retrieve the module loader associated with this preprocessor.
   ModuleLoader &getModuleLoader() const { return TheModuleLoader; }
 
+  bool hadModuleLoaderFatalFailure() const {
+    return TheModuleLoader.HadFatalFailure;
+  }
+
   /// \brief True if we are currently preprocessing a #if or #elif directive
   bool isParsingIfOrElifDirective() const { 
     return ParsingIfOrElifDirective;
@@ -474,6 +490,16 @@ public:
     return SuppressIncludeNotFoundError;
   }
 
+  /// Sets whether the preprocessor is responsible for producing output or if
+  /// it is producing tokens to be consumed by Parse and Sema.
+  void setPreprocessedOutput(bool IsPreprocessedOutput) {
+    PreprocessedOutput = IsPreprocessedOutput;
+  }
+
+  /// Returns true if the preprocessor is responsible for generating output,
+  /// false if it is producing tokens to be consumed by Parse and Sema.
+  bool isPreprocessedOutput() const { return PreprocessedOutput; }
+
   /// isCurrentLexer - Return true if we are lexing directly from the specified
   /// lexer.
   bool isCurrentLexer(const PreprocessorLexer *L) const {
@@ -490,6 +516,9 @@ public:
   /// expansions going on at the time.
   PreprocessorLexer *getCurrentFileLexer() const;
 
+  /// \brief Returns the file ID for the preprocessor predefines.
+  FileID getPredefinesFileID() const { return PredefinesFileID; }
+
   /// getPPCallbacks/addPPCallbacks - Accessors for preprocessor callbacks.
   /// Note that this class takes ownership of any PPCallbacks object given to
   /// it.
@@ -500,53 +529,54 @@ public:
     Callbacks = C;
   }
 
-  /// \brief Attach an preprocessor mutation listener to the preprocessor.
-  ///
-  /// The preprocessor mutation listener provides the ability to track
-  /// modifications to the preprocessor entities committed after they were
-  /// initially created.
-  void setPPMutationListener(PPMutationListener *Listener) {
-    this->Listener = Listener;
-  }
-
-  /// \brief Retrieve a pointer to the preprocessor mutation listener
-  /// associated with this preprocessor, if any.
-  PPMutationListener *getPPMutationListener() const { return Listener; }
-
-  /// \brief Given an identifier, return the MacroInfo it is \#defined to
-  /// or null if it isn't \#define'd.
-  MacroInfo *getMacroInfo(IdentifierInfo *II) const {
+  /// \brief Given an identifier, return its latest MacroDirective if it is
+  // \#defined or null if it isn't \#define'd.
+  MacroDirective *getMacroDirective(IdentifierInfo *II) const {
     if (!II->hasMacroDefinition())
       return 0;
 
-    MacroInfo *MI = getMacroInfoHistory(II);
-    assert(MI->getUndefLoc().isInvalid() && "Macro is undefined!");
-    return MI;
+    MacroDirective *MD = getMacroDirectiveHistory(II);
+    assert(MD->isDefined() && "Macro is undefined!");
+    return MD;
+  }
+
+  const MacroInfo *getMacroInfo(IdentifierInfo *II) const {
+    return const_cast<Preprocessor*>(this)->getMacroInfo(II);
+  }
+
+  MacroInfo *getMacroInfo(IdentifierInfo *II) {
+    if (MacroDirective *MD = getMacroDirective(II))
+      return MD->getMacroInfo();
+    return 0;
   }
 
   /// \brief Given an identifier, return the (probably #undef'd) MacroInfo
   /// representing the most recent macro definition. One can iterate over all
   /// previous macro definitions from it. This method should only be called for
   /// identifiers that hadMacroDefinition().
-  MacroInfo *getMacroInfoHistory(const IdentifierInfo *II) const;
+  MacroDirective *getMacroDirectiveHistory(const IdentifierInfo *II) const;
 
-  /// \brief Specify a macro for this identifier.
-  void setMacroInfo(IdentifierInfo *II, MacroInfo *MI);
-  /// \brief Add a MacroInfo that was loaded from an AST file.
-  void addLoadedMacroInfo(IdentifierInfo *II, MacroInfo *MI,
-                          MacroInfo *Hint = 0);
-  /// \brief Make the given MacroInfo, that was loaded from an AST file and
-  /// previously hidden, visible.
-  void makeLoadedMacroInfoVisible(IdentifierInfo *II, MacroInfo *MI);
-  /// \brief Undefine a macro for this identifier.
-  void clearMacroInfo(IdentifierInfo *II);
+  /// \brief Add a directive to the macro directive history for this identifier.
+  void appendMacroDirective(IdentifierInfo *II, MacroDirective *MD);
+  DefMacroDirective *appendDefMacroDirective(IdentifierInfo *II, MacroInfo *MI,
+                                             SourceLocation Loc,
+                                             bool isImported) {
+    DefMacroDirective *MD = AllocateDefMacroDirective(MI, Loc, isImported);
+    appendMacroDirective(II, MD);
+    return MD;
+  }
+  DefMacroDirective *appendDefMacroDirective(IdentifierInfo *II, MacroInfo *MI){
+    return appendDefMacroDirective(II, MI, MI->getDefinitionLoc(), false);
+  }
+  /// \brief Set a MacroDirective that was loaded from a PCH file.
+  void setLoadedMacroDirective(IdentifierInfo *II, MacroDirective *MD);
 
   /// macro_iterator/macro_begin/macro_end - This allows you to walk the macro
   /// history table. Currently defined macros have
   /// IdentifierInfo::hasMacroDefinition() set and an empty
   /// MacroInfo::getUndefLoc() at the head of the list.
   typedef llvm::DenseMap<const IdentifierInfo *,
-                         MacroInfo*>::const_iterator macro_iterator;
+                         MacroDirective*>::const_iterator macro_iterator;
   macro_iterator macro_begin(bool IncludeExternalMacros = true) const;
   macro_iterator macro_end(bool IncludeExternalMacros = true) const;
 
@@ -689,17 +719,8 @@ public:
   /// caching of tokens is on.
   bool isBacktrackEnabled() const { return !BacktrackPositions.empty(); }
 
-  /// Lex - To lex a token from the preprocessor, just pull a token from the
-  /// current lexer or macro object.
-  void Lex(Token &Result) {
-    switch (CurLexerKind) {
-    case CLK_Lexer: CurLexer->Lex(Result); break;
-    case CLK_PTHLexer: CurPTHLexer->Lex(Result); break;
-    case CLK_TokenLexer: CurTokenLexer->Lex(Result); break;
-    case CLK_CachingLexer: CachingLex(Result); break;
-    case CLK_LexAfterModuleImport: LexAfterModuleImport(Result); break;
-    }
-  }
+  /// Lex - Lex the next token for this preprocessor.
+  void Lex(Token &Result);
 
   void LexAfterModuleImport(Token &Result);
 
@@ -804,6 +825,13 @@ public:
     assert(Tok.isAnnotation() && "Expected annotation token");
     if (CachedLexPos != 0 && isBacktrackEnabled())
       AnnotatePreviousCachedTokens(Tok);
+  }
+
+  /// Get the location of the last cached token, suitable for setting the end
+  /// location of an annotation token.
+  SourceLocation getLastCachedTokenLocation() const {
+    assert(CachedLexPos != 0);
+    return CachedTokens[CachedLexPos-1].getLocation();
   }
 
   /// \brief Replace the last token with an annotation token.
@@ -927,8 +955,8 @@ public:
   ///   "cleaning", e.g. if it contains trigraphs or escaped newlines
   /// \param invalid If non-null, will be set \c true if an error occurs.
   StringRef getSpelling(SourceLocation loc,
-                              SmallVectorImpl<char> &buffer,
-                              bool *invalid = 0) const {
+                        SmallVectorImpl<char> &buffer,
+                        bool *invalid = 0) const {
     return Lexer::getSpelling(loc, buffer, SourceMgr, LangOpts, invalid);
   }
 
@@ -967,8 +995,9 @@ public:
 
   /// \brief Relex the token at the specified location.
   /// \returns true if there was a failure, false on success.
-  bool getRawToken(SourceLocation Loc, Token &Result) {
-    return Lexer::getRawToken(Loc, Result, SourceMgr, LangOpts);
+  bool getRawToken(SourceLocation Loc, Token &Result,
+                   bool IgnoreWhiteSpace = false) {
+    return Lexer::getRawToken(Loc, Result, SourceMgr, LangOpts, IgnoreWhiteSpace);
   }
 
   /// getSpellingOfSingleCharacterNumericConstant - Tok is a numeric constant
@@ -1133,7 +1162,10 @@ public:
   /// identifier and has filled in the tokens IdentifierInfo member.  This
   /// callback potentially macro expands it or turns it into a named token (like
   /// 'for').
-  void HandleIdentifier(Token &Identifier);
+  ///
+  /// \returns true if we actually computed a token, false if we need to
+  /// lex again.
+  bool HandleIdentifier(Token &Identifier);
 
 
   /// HandleEndOfFile - This callback is invoked when the lexer hits the end of
@@ -1175,8 +1207,9 @@ public:
   /// \brief Allocate a new MacroInfo object with the provided SourceLocation.
   MacroInfo *AllocateMacroInfo(SourceLocation L);
 
-  /// \brief Allocate a new MacroInfo object which is clone of \p MI.
-  MacroInfo *CloneMacroInfo(const MacroInfo &MI);
+  /// \brief Allocate a new MacroInfo object loaded from an AST file.
+  MacroInfo *AllocateDeserializedMacroInfo(SourceLocation L,
+                                           unsigned SubModuleID);
 
   /// \brief Turn the specified lexer token into a fully checked and spelled
   /// filename, e.g. as an operand of \#include. 
@@ -1193,12 +1226,12 @@ public:
   ///
   /// Returns null on failure.  \p isAngled indicates whether the file
   /// reference is for system \#include's or not (i.e. using <> instead of "").
-  const FileEntry *LookupFile(StringRef Filename,
+  const FileEntry *LookupFile(SourceLocation FilenameLoc, StringRef Filename,
                               bool isAngled, const DirectoryLookup *FromDir,
                               const DirectoryLookup *&CurDir,
                               SmallVectorImpl<char> *SearchPath,
                               SmallVectorImpl<char> *RelativePath,
-                              Module **SuggestedModule,
+                              ModuleMap::KnownHeader *SuggestedModule,
                               bool SkipCache = false);
 
   /// GetCurLookup - The DirectoryLookup structure used to find the current
@@ -1250,8 +1283,17 @@ private:
     IncludeMacroStack.pop_back();
   }
 
+  void PropagateLineStartLeadingSpaceInfo(Token &Result);
+
   /// \brief Allocate a new MacroInfo object.
   MacroInfo *AllocateMacroInfo();
+
+  DefMacroDirective *AllocateDefMacroDirective(MacroInfo *MI,
+                                               SourceLocation Loc,
+                                               bool isImported);
+  UndefMacroDirective *AllocateUndefMacroDirective(SourceLocation UndefLoc);
+  VisibilityMacroDirective *AllocateVisibilityMacroDirective(SourceLocation Loc,
+                                                             bool isPublic);
 
   /// \brief Release the specified MacroInfo for re-use.
   ///
@@ -1299,8 +1341,8 @@ private:
 
   /// HandleMacroExpandedIdentifier - If an identifier token is read that is to
   /// be expanded as a macro, handle it and return the next token as 'Tok'.  If
-  /// the macro should not be expanded return true, otherwise return false.
-  bool HandleMacroExpandedIdentifier(Token &Tok, MacroInfo *MI);
+  /// we lexed a token, return true; otherwise the caller should lex again.
+  bool HandleMacroExpandedIdentifier(Token &Tok, MacroDirective *MD);
 
   /// \brief Cache macro expanded tokens for TokenLexers.
   //
@@ -1344,6 +1386,12 @@ private:
   /// start getting tokens from it using the PTH cache.
   void EnterSourceFileWithPTH(PTHLexer *PL, const DirectoryLookup *Dir);
 
+  /// \brief Set the file ID for the preprocessor predefines.
+  void setPredefinesFileID(FileID FID) {
+    assert(PredefinesFileID.isInvalid() && "PredefinesFileID already set!");
+    PredefinesFileID = FID;
+  }
+
   /// IsFileLexer - Returns true if we are lexing from a file and not a
   ///  pragma or a macro.
   static bool IsFileLexer(const Lexer* L, const PreprocessorLexer* P) {
@@ -1364,7 +1412,7 @@ private:
   bool InCachingLexMode() const {
     // If the Lexer pointers are 0 and IncludeMacroStack is empty, it means
     // that we are past EOF, not that we are in CachingLex mode.
-    return CurPPLexer == 0 && CurTokenLexer == 0 && CurPTHLexer == 0 &&
+    return !CurPPLexer && !CurTokenLexer && !CurPTHLexer &&
            !IncludeMacroStack.empty();
   }
   void EnterCachingLexMode();
@@ -1396,11 +1444,33 @@ private:
   void HandleImportDirective(SourceLocation HashLoc, Token &Tok);
   void HandleMicrosoftImportDirective(Token &Tok);
 
+  // Module inclusion testing.
+  /// \brief Find the module for the source or header file that \p FilenameLoc
+  /// points to.
+  Module *getModuleForLocation(SourceLocation FilenameLoc);
+
+  /// \brief Verify that a private header is included only from within its
+  /// module.
+  bool violatesPrivateInclude(Module *RequestingModule,
+                              const FileEntry *IncFileEnt,
+                              ModuleMap::ModuleHeaderRole Role,
+                              Module *RequestedModule);
+
+  /// \brief Verify that a module includes headers only from modules that it
+  /// has declared that it uses.
+  bool violatesUseDeclarations(Module *RequestingModule,
+                               Module *RequestedModule);
+
+  /// \brief Verify that it is legal for the source file that \p FilenameLoc
+  /// points to to include the file \p Filename.
+  ///
+  /// Tries to reuse \p IncFileEnt.
+  void verifyModuleInclude(SourceLocation FilenameLoc, StringRef Filename,
+                           const FileEntry *IncFileEnt);
+
   // Macro handling.
-  void HandleDefineDirective(Token &Tok);
+  void HandleDefineDirective(Token &Tok, bool ImmediatelyAfterTopLevelIfndef);
   void HandleUndefDirective(Token &Tok);
-  void UndefineMacro(IdentifierInfo *II, MacroInfo *MI,
-                     SourceLocation UndefLoc);
 
   // Conditional Inclusion.
   void HandleIfdefDirective(Token &Tok, bool isIfndef,
@@ -1411,15 +1481,14 @@ private:
   void HandleElifDirective(Token &Tok);
 
   // Pragmas.
-  void HandlePragmaDirective(unsigned Introducer);
+  void HandlePragmaDirective(SourceLocation IntroducerLoc,
+                             PragmaIntroducerKind Introducer);
 public:
   void HandlePragmaOnce(Token &OnceTok);
   void HandlePragmaMark();
   void HandlePragmaPoison(Token &PoisonTok);
   void HandlePragmaSystemHeader(Token &SysHeaderTok);
   void HandlePragmaDependency(Token &DependencyTok);
-  void HandlePragmaComment(Token &CommentTok);
-  void HandlePragmaMessage(Token &MessageTok);
   void HandlePragmaPushMacro(Token &Tok);
   void HandlePragmaPopMacro(Token &Tok);
   void HandlePragmaIncludeAlias(Token &Tok);

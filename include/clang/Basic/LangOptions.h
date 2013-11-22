@@ -15,6 +15,7 @@
 #ifndef LLVM_CLANG_LANGOPTIONS_H
 #define LLVM_CLANG_LANGOPTIONS_H
 
+#include "clang/Basic/CommentOptions.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/ObjCRuntime.h"
 #include "clang/Basic/Visibility.h"
@@ -65,6 +66,8 @@ public:
     SOB_Trapping    // -ftrapv
   };
 
+  enum AddrSpaceMapMangling { ASMM_Target, ASMM_On, ASMM_Off };
+
 public:
   clang::ObjCRuntime ObjCRuntime;
 
@@ -78,6 +81,9 @@ public:
 
   /// \brief The name of the current module.
   std::string CurrentModule;
+
+  /// \brief Options for parsing comments.
+  CommentOptions CommentOpts;
   
   LangOptions();
 
@@ -90,6 +96,11 @@ public:
   
   bool isSignedOverflowDefined() const {
     return getSignedOverflowBehavior() == SOB_Defined;
+  }
+  
+  bool isSubscriptPointerArithmetic() const {
+    return ObjCRuntime.isSubscriptPointerArithmetic() &&
+           !ObjCSubscriptingLegacyRuntime;
   }
 
   /// \brief Reset all of the options that are not considered when building a

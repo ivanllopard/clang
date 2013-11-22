@@ -1,18 +1,19 @@
-// RUN: %clang -cc1 -triple x86_64-unknown-unknown -std=c++11 -verify %s
+// RUN: %clang_cc1 -triple x86_64-unknown-unknown -std=c++11 -verify %s
 
 // Error cases.
 
 [[gnu::this_attribute_does_not_exist]] int unknown_attr;
 // expected-warning@-1 {{unknown attribute 'this_attribute_does_not_exist' ignored}}
 int [[gnu::unused]] attr_on_type;
-// expected-warning@-1 {{attribute 'unused' ignored, because it is not attached to a declaration}}
+// expected-error@-1 {{'unused' attribute cannot be applied to types}}
 int *[[gnu::unused]] attr_on_ptr;
 // expected-warning@-1 {{attribute 'unused' ignored, because it cannot be applied to a type}}
 
 // Valid cases.
 
+void aliasb [[gnu::alias("_Z6alias1v")]] ();
 void alias1() {}
-void alias2 [[gnu::alias("_Z6alias1v")]] ();
+void aliasa [[gnu::alias("_Z6alias1v")]] ();
 
 [[gnu::aligned(8)]] int aligned;
 void aligned_fn [[gnu::aligned(32)]] ();

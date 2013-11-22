@@ -69,7 +69,7 @@ protected:
   /// before BeginSourceFileAction is called.
   ///
   /// \return True on success; on failure BeginSourceFileAction(),
-  /// ExecutionAction() and EndSourceFileAction() will not be called.
+  /// ExecuteAction() and EndSourceFileAction() will not be called.
   virtual bool BeginInvocation(CompilerInstance &CI) { return true; }
 
   /// \brief Callback at the start of processing a single input.
@@ -94,6 +94,14 @@ protected:
   /// BeginSourceFileAction (and BeginSourceFile).
   virtual void EndSourceFileAction() {}
 
+  /// \brief Callback at the end of processing a single input, to determine
+  /// if the output files should be erased or not.
+  ///
+  /// By default it returns true if a compiler error occurred.
+  /// This is guaranteed to only be called following a successful call to
+  /// BeginSourceFileAction (and BeginSourceFile).
+  virtual bool shouldEraseOutputFiles();
+
   /// @}
 
 public:
@@ -116,7 +124,7 @@ public:
 
   bool isCurrentFileAST() const {
     assert(!CurrentInput.isEmpty() && "No current file!");
-    return CurrentASTUnit != 0;
+    return CurrentASTUnit.isValid();
   }
 
   const FrontendInputFile &getCurrentInput() const {

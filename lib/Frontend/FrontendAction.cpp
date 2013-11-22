@@ -188,6 +188,10 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
 
     setCurrentInput(Input, AST);
 
+    // Inform the diagnostic client we are processing a source file.
+    CI.getDiagnosticClient().BeginSourceFile(CI.getLangOpts(), 0);
+    HasBegunSourceFile = true;
+
     // Set the shared objects, these are reset when we finish processing the
     // file, otherwise the CompilerInstance will happily destroy them.
     CI.setFileManager(&AST->getFileManager());
@@ -247,16 +251,8 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
                                            CI.getLangOpts(),
                                            CI.getTargetOpts(),
                                            CI.getPreprocessorOpts())) {
-          for (unsigned I = 0, N = PPOpts.Includes.size(); I != N; ++I) {
-            if (PPOpts.Includes[I] == PPOpts.ImplicitPCHInclude) {
-              PPOpts.Includes[I] = Dir->path();
-              PPOpts.ImplicitPCHInclude = Dir->path();
-              Found = true;
-              break;
-            }
-          }
-
-          assert(Found && "Implicit PCH include not in includes list?");
+          PPOpts.ImplicitPCHInclude = Dir->path();
+          Found = true;
           break;
         }
       }
@@ -291,8 +287,6 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
       goto failure;
 
     CI.getASTContext().setASTMutationListener(Consumer->GetASTMutationListener());
-    CI.getPreprocessor().setPPMutationListener(
-      Consumer->GetPPMutationListener());
     
     if (!CI.getPreprocessorOpts().ChainedIncludes.empty()) {
       // Convert headers to PCH and chain them.
@@ -300,6 +294,8 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
       source.reset(ChainedIncludesSource::create(CI));
       if (!source)
         goto failure;
+      CI.setModuleManager(static_cast<ASTReader*>(
+         &static_cast<ChainedIncludesSource*>(source.get())->getFinalReader()));
       CI.getASTContext().setExternalSource(source);
 
     } else if (!CI.getPreprocessorOpts().ImplicitPCHInclude.empty()) {
@@ -433,9 +429,9 @@ void FrontendAction::EndSourceFile() {
     llvm::errs() << "\n";
   }
 
-  // Cleanup the output streams, and erase the output files if we encountered
-  // an error.
-  CI.clearOutputFiles(/*EraseFiles=*/CI.getDiagnostics().hasErrorOccurred());
+  // Cleanup the output streams, and erase the output files if instructed by the
+  // FrontendAction.
+  CI.clearOutputFiles(/*EraseFiles=*/shouldEraseOutputFiles());
 
   if (isCurrentFileAST()) {
     CI.takeSema();
@@ -449,12 +445,18 @@ void FrontendAction::EndSourceFile() {
   setCurrentInput(FrontendInputFile());
 }
 
+bool FrontendAction::shouldEraseOutputFiles() {
+  return getCompilerInstance().getDiagnostics().hasErrorOccurred();
+}
+
 //===----------------------------------------------------------------------===//
 // Utility Actions
 //===----------------------------------------------------------------------===//
 
 void ASTFrontendAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
+  if (!CI.hasPreprocessor())
+    return;
 
   // FIXME: Move the truncation aspect of this into Sema, we delayed this till
   // here so the source manager would be initialized.

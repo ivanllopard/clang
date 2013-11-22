@@ -25,8 +25,8 @@
 //  ^, ^=   |   0    |        |        |   x    |   x    |         |
 //  <<, <<= |        |        |        |   x    |   0    |         |
 //  >>, >>= |        |        |        |   x    |   0    |         |
-//  ||      |   1    |   1    |   1    |   x    |   x    |   1     |    1
-//  &&      |   1    |   x    |   x    |   0    |   0    |   x     |    x
+//  ||      |   x    |   1    |   1    |   x    |   x    |   1     |    1
+//  &&      |   x    |   x    |   x    |   0    |   0    |   x     |    x
 //  =       |   x    |        |        |        |        |         |
 //  ==      |   1    |        |        |        |        |         |
 //  >=      |   1    |        |        |        |        |         |
@@ -173,11 +173,11 @@ void IdempotentOperationChecker::checkPreStmt(const BinaryOperator *B,
   case BO_ShrAssign:
   case BO_Assign:
   // Assign statements have one extra level of indirection
-    if (!isa<Loc>(LHSVal)) {
+    if (!LHSVal.getAs<Loc>()) {
       A = Impossible;
       return;
     }
-    LHSVal = state->getSVal(cast<Loc>(LHSVal), LHS->getType());
+    LHSVal = state->getSVal(LHSVal.castAs<Loc>(), LHS->getType());
   }
 
 
@@ -332,9 +332,9 @@ void IdempotentOperationChecker::checkPostStmt(const BinaryOperator *B,
   // Add the ExplodedNode we just visited
   BinaryOperatorData &Data = hash[B];
 
-  const Stmt *predStmt 
-    = cast<StmtPoint>(C.getPredecessor()->getLocation()).getStmt();
-  
+  const Stmt *predStmt =
+      C.getPredecessor()->getLocation().castAs<StmtPoint>().getStmt();
+
   // Ignore implicit calls to setters.
   if (!isa<BinaryOperator>(predStmt))
     return;
@@ -423,12 +423,12 @@ void IdempotentOperationChecker::checkEndAnalysis(ExplodedGraph &G,
       if (LHSRelevant) {
         const Expr *LHS = i->first->getLHS();
         report->addRange(LHS->getSourceRange());
-        FindLastStoreBRVisitor::registerStatementVarDecls(*report, LHS);
+        FindLastStoreBRVisitor::registerStatementVarDecls(*report, LHS, false);
       }
       if (RHSRelevant) {
         const Expr *RHS = i->first->getRHS();
         report->addRange(i->first->getRHS()->getSourceRange());
-        FindLastStoreBRVisitor::registerStatementVarDecls(*report, RHS);
+        FindLastStoreBRVisitor::registerStatementVarDecls(*report, RHS, false);
       }
 
       BR.emitReport(report);
@@ -582,16 +582,13 @@ IdempotentOperationChecker::pathWasCompletelyAnalyzed(AnalysisDeclContext *AC,
     virtual bool visit(const WorkListUnit &U) {
       ProgramPoint P = U.getNode()->getLocation();
       const CFGBlock *B = 0;
-      if (StmtPoint *SP = dyn_cast<StmtPoint>(&P)) {
+      if (Optional<StmtPoint> SP = P.getAs<StmtPoint>()) {
         B = CBM->getBlock(SP->getStmt());
-      }
-      else if (BlockEdge *BE = dyn_cast<BlockEdge>(&P)) {
+      } else if (Optional<BlockEdge> BE = P.getAs<BlockEdge>()) {
         B = BE->getDst();
-      }
-      else if (BlockEntrance *BEnt = dyn_cast<BlockEntrance>(&P)) {
+      } else if (Optional<BlockEntrance> BEnt = P.getAs<BlockEntrance>()) {
         B = BEnt->getBlock();
-      }
-      else if (BlockExit *BExit = dyn_cast<BlockExit>(&P)) {
+      } else if (Optional<BlockExit> BExit = P.getAs<BlockExit>()) {
         B = BExit->getBlock();
       }
       if (!B)
@@ -681,19 +678,8 @@ bool IdempotentOperationChecker::CanVary(const Expr *Ex,
     return CanVary(B->getRHS(), AC)
         || CanVary(B->getLHS(), AC);
    }
-  case Stmt::UnaryOperatorClass: {
-    const UnaryOperator *U = cast<const UnaryOperator>(Ex);
-    // Handle trivial case first
-    switch (U->getOpcode()) {
-    case UO_Extension:
-      return false;
-    default:
-      return CanVary(U->getSubExpr(), AC);
-    }
-  }
-  case Stmt::ChooseExprClass:
-    return CanVary(cast<const ChooseExpr>(Ex)->getChosenSubExpr(
-        AC->getASTContext()), AC);
+  case Stmt::UnaryOperatorClass:
+    return CanVary(cast<UnaryOperator>(Ex)->getSubExpr(), AC);
   case Stmt::ConditionalOperatorClass:
   case Stmt::BinaryConditionalOperatorClass:
     return CanVary(cast<AbstractConditionalOperator>(Ex)->getCond(), AC);

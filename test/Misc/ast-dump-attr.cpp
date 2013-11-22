@@ -7,8 +7,8 @@ __attribute__((unused));
 
 int TestIndent
 __attribute__((unused));
-// CHECK:      {{^\(VarDecl.*TestIndent[^()]*$}}
-// CHECK-NEXT: {{^  \(UnusedAttr[^()]*\)\)$}}
+// CHECK:      {{^}}VarDecl{{.*TestIndent[^()]*$}}
+// CHECK-NEXT: {{^}}`-UnusedAttr{{[^()]*$}}
 
 void TestAttributedStmt() {
   switch (1) {
@@ -95,3 +95,19 @@ void *TestVariadicUnsigned1(int) __attribute__((alloc_size(1)));
 void *TestVariadicUnsigned2(int, int) __attribute__((alloc_size(1,2)));
 // CHECK: FunctionDecl{{.*}}TestVariadicUnsigned2
 // CHECK:   AllocSizeAttr{{.*}} 0 1
+
+void TestLabel() {
+L: __attribute__((unused)) int i;
+// CHECK: LabelStmt{{.*}}'L'
+// CHECK: VarDecl{{.*}}i 'int'
+// CHECK-NEXT: UnusedAttr{{.*}}
+
+M: __attribute(()) int j;
+// CHECK: LabelStmt {{.*}} 'M'
+// CHECK-NEXT: DeclStmt
+// CHECK-NEXT: VarDecl {{.*}} j 'int'
+
+N: __attribute(()) ;
+// CHECK: LabelStmt {{.*}} 'N'
+// CHECK-NEXT: NullStmt
+}

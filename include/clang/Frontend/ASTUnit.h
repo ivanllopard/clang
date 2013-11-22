@@ -25,7 +25,6 @@
 #include "clang/Lex/ModuleLoader.h"
 #include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
-#include "clang/Sema/Sema.h"
 #include "clang/Serialization/ASTBitCodes.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -44,6 +43,7 @@ namespace llvm {
 }
 
 namespace clang {
+class Sema;
 class ASTContext;
 class ASTReader;
 class CodeCompleteConsumer;
@@ -75,6 +75,7 @@ private:
   IntrusiveRefCntPtr<TargetOptions>       TargetOpts;
   IntrusiveRefCntPtr<HeaderSearchOptions> HSOpts;
   ASTReader *Reader;
+  bool HadModuleLoaderFatalFailure;
 
   struct ASTWriterData;
   OwningPtr<ASTWriterData> WriterData;
@@ -456,7 +457,7 @@ public:
   void setASTContext(ASTContext *ctx) { Ctx = ctx; }
   void setPreprocessor(Preprocessor *pp);
 
-  bool hasSema() const { return TheSema; }
+  bool hasSema() const { return TheSema.isValid(); }
   Sema &getSema() const { 
     assert(TheSema && "ASTUnit does not have a Sema object!");
     return *TheSema; 
@@ -471,19 +472,23 @@ public:
     return OriginalSourceFile;
   }
 
+  ASTMutationListener *getASTMutationListener();
   ASTDeserializationListener *getDeserializationListener();
 
   /// \brief Add a temporary file that the ASTUnit depends on.
   ///
   /// This file will be erased when the ASTUnit is destroyed.
-  void addTemporaryFile(const llvm::sys::Path &TempFile);
-                        
+  void addTemporaryFile(StringRef TempFile);
+
   bool getOnlyLocalDecls() const { return OnlyLocalDecls; }
 
   bool getOwnsRemappedFileBuffers() const { return OwnsRemappedFileBuffers; }
   void setOwnsRemappedFileBuffers(bool val) { OwnsRemappedFileBuffers = val; }
 
   StringRef getMainFileName() const;
+
+  /// \brief If this ASTUnit came from an AST file, returns the filename for it.
+  StringRef getASTFileName() const;
 
   typedef std::vector<Decl *>::iterator top_level_iterator;
 
@@ -694,10 +699,10 @@ public:
   /// lifetime is expected to extend past that of the returned ASTUnit.
   ///
   /// \param Action - The ASTFrontendAction to invoke. Its ownership is not
-  /// transfered.
+  /// transferred.
   ///
   /// \param Unit - optionally an already created ASTUnit. Its ownership is not
-  /// transfered.
+  /// transferred.
   ///
   /// \param Persistent - if true the returned ASTUnit will be complete.
   /// false means the caller is only interested in getting info through the
@@ -839,7 +844,9 @@ public:
   }
 
   virtual void makeModuleVisible(Module *Mod,
-                                 Module::NameVisibilityKind Visibility) { }
+                                 Module::NameVisibilityKind Visibility,
+                                 SourceLocation ImportLoc,
+                                 bool Complain) { }
 
 };
 

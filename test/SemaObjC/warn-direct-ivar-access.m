@@ -54,3 +54,25 @@ id Test32(__weak ITest32 *x) {
            : (*x).ivar;  // expected-error {{dereferencing a __weak pointer is not allowed}}
 }
 
+// rdar://13142820
+@protocol PROTOCOL
+@property (copy, nonatomic) id property_in_protocol;
+@end
+
+__attribute__((objc_root_class)) @interface INTF <PROTOCOL>
+@property (copy, nonatomic) id foo;
+- (id) foo;
+@end
+
+@interface INTF()
+@property (copy, nonatomic) id foo1;
+- (id) foo1;
+@end
+
+@implementation INTF
+- (id) foo { return _foo; }
+- (id) property_in_protocol { return _property_in_protocol; } // expected-warning {{instance variable '_property_in_protocol' is being directly accessed}}
+- (id) foo1 { return _foo1; }
+@synthesize property_in_protocol = _property_in_protocol;
+@end
+

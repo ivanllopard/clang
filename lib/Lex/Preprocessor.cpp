@@ -26,8 +26,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Lex/Preprocessor.h"
-#include "MacroArgs.h"
-#include "clang/Basic/ConvertUTF.h"
+#include "clang/Lex/MacroArgs.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
@@ -47,14 +46,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Capacity.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
 ExternalPreprocessorSource::~ExternalPreprocessorSource() { }
-
-PPMutationListener::~PPMutationListener() { }
 
 Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
                            DiagnosticsEngine &diags, LangOptions &opts,
@@ -67,9 +65,11 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
       TheModuleLoader(TheModuleLoader), ExternalSource(0),
       Identifiers(opts, IILookup), IncrementalProcessing(IncrProcessing),
       CodeComplete(0), CodeCompletionFile(0), CodeCompletionOffset(0),
+      LastTokenWasAt(false), ModuleImportExpectsIdentifier(false),
       CodeCompletionReached(0), SkipMainFilePreamble(0, true), CurPPLexer(0),
-      CurDirLookup(0), CurLexerKind(CLK_Lexer), Callbacks(0), Listener(0),
-      MacroArgCache(0), Record(0), MIChainHead(0), MICache(0) {
+      CurDirLookup(0), CurLexerKind(CLK_Lexer), Callbacks(0),
+      MacroArgCache(0), Record(0), MIChainHead(0), MICache(0),
+      DeserialMIChainHead(0) {
   OwnsHeaderSearch = OwnsHeaders;
   
   ScratchBuf = new ScratchBuffer(SourceMgr);
@@ -97,6 +97,7 @@ Preprocessor::Preprocessor(IntrusiveRefCntPtr<PreprocessorOptions> PPOpts,
   NumCachedTokenLexers = 0;
   PragmasEnabled = true;
   ParsingIfOrElifDirective = false;
+  PreprocessedOutput = false;
 
   CachedLexPos = 0;
 
@@ -153,6 +154,9 @@ Preprocessor::~Preprocessor() {
   // Free any cached macro expanders.
   for (unsigned i = 0, e = NumCachedTokenLexers; i != e; ++i)
     delete TokenLexerCache[i];
+
+  for (DeserializedMacroInfoChain *I = DeserialMIChainHead ; I ; I = I->Next)
+    I->MI.Destroy();
 
   // Free any cached MacroArgs.
   for (MacroArgs *ArgList = MacroArgCache; ArgList; )
@@ -305,14 +309,15 @@ StringRef Preprocessor::getLastMacroWithSpelling(
   StringRef BestSpelling;
   for (Preprocessor::macro_iterator I = macro_begin(), E = macro_end();
        I != E; ++I) {
-    if (!I->second->isObjectLike())
+    if (!I->second->getMacroInfo()->isObjectLike())
       continue;
-    const MacroInfo *MI = I->second->findDefinitionAtLoc(Loc, SourceMgr);
-    if (!MI)
+    const MacroDirective::DefInfo
+      Def = I->second->findDirectiveAtLoc(Loc, SourceMgr);
+    if (!Def)
       continue;
-    if (!MacroDefinitionEquals(MI, Tokens))
+    if (!MacroDefinitionEquals(Def.getMacroInfo(), Tokens))
       continue;
-    SourceLocation Location = I->second->getDefinitionLoc();
+    SourceLocation Location = Def.getLocation();
     // Choose the macro defined latest.
     if (BestLocation.isInvalid() ||
         (Location.isValid() &&
@@ -482,6 +487,7 @@ void Preprocessor::EnterMainSourceFile() {
   assert(SB && "Cannot create predefined source buffer");
   FileID FID = SourceMgr.createFileIDForMemBuffer(SB);
   assert(!FID.isInvalid() && "Could not create FileID for predefines?");
+  setPredefinesFileID(FID);
 
   // Start parsing the predefines.
   EnterSourceFile(FID, 0, SourceLocation());
@@ -501,7 +507,7 @@ static void appendCodePoint(unsigned Codepoint,
                             llvm::SmallVectorImpl<char> &Str) {
   char ResultBuf[4];
   char *ResultPtr = ResultBuf;
-  bool Res = ConvertCodePointToUTF8(Codepoint, ResultPtr);
+  bool Res = llvm::ConvertCodePointToUTF8(Codepoint, ResultPtr);
   (void)Res;
   assert(Res && "Unexpected conversion failure");
   Str.append(ResultBuf, ResultPtr);
@@ -609,7 +615,7 @@ void Preprocessor::HandlePoisonedIdentifier(Token & Identifier) {
 /// IdentifierInfo's 'isHandleIdentifierCase' bit.  If this method changes, the
 /// IdentifierInfo methods that compute these properties will need to change to
 /// match.
-void Preprocessor::HandleIdentifier(Token &Identifier) {
+bool Preprocessor::HandleIdentifier(Token &Identifier) {
   assert(Identifier.getIdentifierInfo() &&
          "Can't handle identifiers without identifier info!");
 
@@ -639,11 +645,14 @@ void Preprocessor::HandleIdentifier(Token &Identifier) {
   }
 
   // If this is a macro to be expanded, do it.
-  if (MacroInfo *MI = getMacroInfo(&II)) {
+  if (MacroDirective *MD = getMacroDirective(&II)) {
+    MacroInfo *MI = MD->getMacroInfo();
     if (!DisableMacroExpansion) {
       if (!Identifier.isExpandDisabled() && MI->isEnabled()) {
-        if (!HandleMacroExpandedIdentifier(Identifier, MI))
-          return;
+        // C99 6.10.3p10: If the preprocessing token immediately after the
+        // macro name isn't a '(', this macro should not be expanded.
+        if (!MI->isFunctionLike() || isNextPPTokenLParen())
+          return HandleMacroExpandedIdentifier(Identifier, MD);
       } else {
         // C99 6.10.3.4p2 says that a disabled macro may never again be
         // expanded, even if it's in a context where it could be expanded in the
@@ -679,20 +688,51 @@ void Preprocessor::HandleIdentifier(Token &Identifier) {
   if (II.isExtensionToken() && !DisableMacroExpansion)
     Diag(Identifier, diag::ext_token_used);
   
-  // If this is the 'import' contextual keyword, note
+  // If this is the 'import' contextual keyword following an '@', note
   // that the next token indicates a module name.
   //
   // Note that we do not treat 'import' as a contextual
   // keyword when we're in a caching lexer, because caching lexers only get
   // used in contexts where import declarations are disallowed.
-  if (II.isModulesImport() && !InMacroArgs && !DisableMacroExpansion &&
-      getLangOpts().Modules && CurLexerKind != CLK_CachingLexer) {
+  if (LastTokenWasAt && II.isModulesImport() && !InMacroArgs && 
+      !DisableMacroExpansion && getLangOpts().Modules && 
+      CurLexerKind != CLK_CachingLexer) {
     ModuleImportLoc = Identifier.getLocation();
     ModuleImportPath.clear();
     ModuleImportExpectsIdentifier = true;
     CurLexerKind = CLK_LexAfterModuleImport;
   }
+  return true;
 }
+
+void Preprocessor::Lex(Token &Result) {
+  // We loop here until a lex function retuns a token; this avoids recursion.
+  bool ReturnedToken;
+  do {
+    switch (CurLexerKind) {
+    case CLK_Lexer:
+      ReturnedToken = CurLexer->Lex(Result);
+      break;
+    case CLK_PTHLexer:
+      ReturnedToken = CurPTHLexer->Lex(Result);
+      break;
+    case CLK_TokenLexer:
+      ReturnedToken = CurTokenLexer->Lex(Result);
+      break;
+    case CLK_CachingLexer:
+      CachingLex(Result);
+      ReturnedToken = true;
+      break;
+    case CLK_LexAfterModuleImport:
+      LexAfterModuleImport(Result);
+      ReturnedToken = true;
+      break;
+    }
+  } while (!ReturnedToken);
+
+  LastTokenWasAt = Result.is(tok::at);
+}
+
 
 /// \brief Lex a token following the 'import' contextual keyword.
 ///
@@ -728,7 +768,7 @@ void Preprocessor::LexAfterModuleImport(Token &Result) {
   }
 
   // If we have a non-empty module path, load the named module.
-  if (!ModuleImportPath.empty()) {
+  if (!ModuleImportPath.empty() && getLangOpts().Modules) {
     Module *Imported = TheModuleLoader.loadModule(ModuleImportLoc,
                                                   ModuleImportPath,
                                                   Module::MacrosVisible,

@@ -61,7 +61,9 @@ class VoidModuleLoader : public ModuleLoader {
   }
 
   virtual void makeModuleVisible(Module *Mod,
-                                 Module::NameVisibilityKind Visibility) { }
+                                 Module::NameVisibilityKind Visibility,
+                                 SourceLocation ImportLoc,
+                                 bool Complain) { }
 };
 
 TEST_F(PPConditionalDirectiveRecordTest, PPRecAPI) {
@@ -88,7 +90,7 @@ TEST_F(PPConditionalDirectiveRecordTest, PPRecAPI) {
   SourceMgr.createMainFileIDForMemBuffer(buf);
 
   VoidModuleLoader ModLoader;
-  HeaderSearch HeaderInfo(new HeaderSearchOptions, FileMgr, Diags, LangOpts, 
+  HeaderSearch HeaderInfo(new HeaderSearchOptions, SourceMgr, Diags, LangOpts, 
                           Target.getPtr());
   Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts,Target.getPtr(),
                   SourceMgr, HeaderInfo, ModLoader,

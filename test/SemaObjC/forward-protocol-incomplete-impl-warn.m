@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -fobjc-default-synthesize-properties %s
+// RUN: %clang_cc1 -fsyntax-only -verify %s
 // rdar://12958878
 
 @interface NSObject @end
@@ -16,6 +16,5 @@
 @end
 
 @implementation IBImageCatalogDocument // expected-warning {{auto property synthesis will not synthesize property declared in a protocol}} \ 
-				       // expected-warning {{incomplete implementation}} \
 				       // expected-warning {{method 'invalidate' in protocol not implemented}}
 @end

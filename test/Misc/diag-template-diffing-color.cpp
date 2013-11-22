@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -fsyntax-only -fcolor-diagnostics %s 2>&1 | FileCheck %s
-// RUN: %clang_cc1 -fsyntax-only -fcolor-diagnostics -fdiagnostics-show-template-tree %s 2>&1 | FileCheck %s -check-prefix=TREE
+// RUN: not %clang_cc1 -fsyntax-only -fcolor-diagnostics %s 2>&1 | FileCheck %s
+// RUN: not %clang_cc1 -fsyntax-only -fcolor-diagnostics -fdiagnostics-show-template-tree %s 2>&1 | FileCheck %s -check-prefix=TREE
 // REQUIRES: ansi-escape-sequences
 template<typename> struct foo {};
 void func(foo<int>);
@@ -70,3 +70,17 @@ void test19() {
 // TREE:   vector<
 // TREE:     [const != const [[CYAN]]volatile[[RESET]]] vector<
 // TREE:       [...]>>
+
+namespace default_args {
+  template <int x, int y = 1+1, int z = 2>
+  class A {};
+
+  void foo(A<0> &M) {
+    // CHECK: no viable conversion from 'A<[...], (default) [[CYAN]]1 + 1[[RESET]][[BOLD]] aka [[CYAN]]2[[RESET]][[BOLD]], (default) [[CYAN]]2[[RESET]][[BOLD]]>' to 'A<[...], [[CYAN]]0[[RESET]][[BOLD]], [[CYAN]]0[[RESET]][[BOLD]]>'
+    A<0, 0, 0> N = M;
+
+    // CHECK: no viable conversion from 'A<[2 * ...], (default) [[CYAN]]2[[RESET]][[BOLD]]>' to 'A<[2 * ...], [[CYAN]]0[[RESET]][[BOLD]]>'
+    A<0, 2, 0> N2 = M;
+  }
+
+}

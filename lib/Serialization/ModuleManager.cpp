@@ -11,9 +11,11 @@
 //  modules for the ASTReader.
 //
 //===----------------------------------------------------------------------===//
-#include "clang/Serialization/ModuleManager.h"
+#include "clang/Lex/ModuleMap.h"
 #include "clang/Serialization/GlobalModuleIndex.h"
+#include "clang/Serialization/ModuleManager.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
 
@@ -25,26 +27,52 @@ using namespace clang;
 using namespace serialization;
 
 ModuleFile *ModuleManager::lookup(StringRef Name) {
-  const FileEntry *Entry = FileMgr.getFile(Name);
-  return Modules[Entry];
+  const FileEntry *Entry = FileMgr.getFile(Name, /*openFile=*/false,
+                                           /*cacheFailure=*/false);
+  if (Entry)
+    return lookup(Entry);
+
+  return 0;
+}
+
+ModuleFile *ModuleManager::lookup(const FileEntry *File) {
+  llvm::DenseMap<const FileEntry *, ModuleFile *>::iterator Known
+    = Modules.find(File);
+  if (Known == Modules.end())
+    return 0;
+
+  return Known->second;
 }
 
 llvm::MemoryBuffer *ModuleManager::lookupBuffer(StringRef Name) {
-  const FileEntry *Entry = FileMgr.getFile(Name);
+  const FileEntry *Entry = FileMgr.getFile(Name, /*openFile=*/false,
+                                           /*cacheFailure=*/false);
   return InMemoryBuffers[Entry];
 }
 
-std::pair<ModuleFile *, bool>
+ModuleManager::AddModuleResult
 ModuleManager::addModule(StringRef FileName, ModuleKind Type,
                          SourceLocation ImportLoc, ModuleFile *ImportedBy,
-                         unsigned Generation, std::string &ErrorStr) {
-  const FileEntry *Entry = FileMgr.getFile(FileName);
-  if (!Entry && FileName != "-") {
-    ErrorStr = "file not found";
-    return std::make_pair(static_cast<ModuleFile*>(0), false);
+                         unsigned Generation,
+                         off_t ExpectedSize, time_t ExpectedModTime,
+                         ModuleFile *&Module,
+                         std::string &ErrorStr) {
+  Module = 0;
+
+  // Look for the file entry. This only fails if the expected size or
+  // modification time differ.
+  const FileEntry *Entry;
+  if (lookupModuleFile(FileName, ExpectedSize, ExpectedModTime, Entry)) {
+    ErrorStr = "module file out of date";
+    return OutOfDate;
   }
-  
-  // Check whether we already loaded this module, before 
+
+  if (!Entry && FileName != "-") {
+    ErrorStr = "module file not found";
+    return Missing;
+  }
+
+  // Check whether we already loaded this module, before
   ModuleFile *&ModuleEntry = Modules[Entry];
   bool NewModule = false;
   if (!ModuleEntry) {
@@ -74,12 +102,13 @@ ModuleManager::addModule(StringRef FileName, ModuleKind Type,
         New->Buffer.reset(FileMgr.getBufferForFile(FileName, &ErrorStr));
       
       if (!New->Buffer)
-        return std::make_pair(static_cast<ModuleFile*>(0), false);
+        return Missing;
     }
     
     // Initialize the stream
     New->StreamFile.init((const unsigned char *)New->Buffer->getBufferStart(),
-                         (const unsigned char *)New->Buffer->getBufferEnd());     }
+                         (const unsigned char *)New->Buffer->getBufferEnd());
+  }
   
   if (ImportedBy) {
     ModuleEntry->ImportedBy.insert(ImportedBy);
@@ -90,8 +119,9 @@ ModuleManager::addModule(StringRef FileName, ModuleKind Type,
     
     ModuleEntry->DirectlyImported = true;
   }
-  
-  return std::make_pair(ModuleEntry, NewModule);
+
+  Module = ModuleEntry;
+  return NewModule? NewlyLoaded : AlreadyLoaded;
 }
 
 namespace {
@@ -110,7 +140,8 @@ namespace {
   };
 }
 
-void ModuleManager::removeModules(ModuleIterator first, ModuleIterator last) {
+void ModuleManager::removeModules(ModuleIterator first, ModuleIterator last,
+                                  ModuleMap *modMap) {
   if (first == last)
     return;
 
@@ -126,6 +157,14 @@ void ModuleManager::removeModules(ModuleIterator first, ModuleIterator last) {
   // Delete the modules and erase them from the various structures.
   for (ModuleIterator victim = first; victim != last; ++victim) {
     Modules.erase((*victim)->File);
+
+    FileMgr.invalidateCache((*victim)->File);
+    if (modMap) {
+      StringRef ModuleName = llvm::sys::path::stem((*victim)->FileName);
+      if (Module *mod = modMap->findModule(ModuleName)) {
+        mod->setASTFile(0);
+      }
+    }
     delete *victim;
   }
 
@@ -141,44 +180,61 @@ void ModuleManager::addInMemoryBuffer(StringRef FileName,
   InMemoryBuffers[Entry] = Buffer;
 }
 
-void ModuleManager::updateModulesInCommonWithGlobalIndex() {
-  ModulesInCommonWithGlobalIndex.clear();
-
-  if (!GlobalIndex)
-    return;
-
-  // Collect the set of modules known to the global index.
-  SmallVector<const FileEntry *, 16> KnownModules;
-  GlobalIndex->getKnownModules(KnownModules);
-
-  // Map those modules to AST files known to the module manager.
-  for (unsigned I = 0, N = KnownModules.size(); I != N; ++I) {
-    llvm::DenseMap<const FileEntry *, ModuleFile *>::iterator Known
-      = Modules.find(KnownModules[I]);
-    if (Known == Modules.end())
-      continue;
-
-    ModulesInCommonWithGlobalIndex.push_back(Known->second);
+ModuleManager::VisitState *ModuleManager::allocateVisitState() {
+  // Fast path: if we have a cached state, use it.
+  if (FirstVisitState) {
+    VisitState *Result = FirstVisitState;
+    FirstVisitState = FirstVisitState->NextState;
+    Result->NextState = 0;
+    return Result;
   }
+
+  // Allocate and return a new state.
+  return new VisitState(size());
+}
+
+void ModuleManager::returnVisitState(VisitState *State) {
+  assert(State->NextState == 0 && "Visited state is in list?");
+  State->NextState = FirstVisitState;
+  FirstVisitState = State;
 }
 
 void ModuleManager::setGlobalIndex(GlobalModuleIndex *Index) {
   GlobalIndex = Index;
-  updateModulesInCommonWithGlobalIndex();
+  if (!GlobalIndex) {
+    ModulesInCommonWithGlobalIndex.clear();
+    return;
+  }
+
+  // Notify the global module index about all of the modules we've already
+  // loaded.
+  for (unsigned I = 0, N = Chain.size(); I != N; ++I) {
+    if (!GlobalIndex->loadedModuleFile(Chain[I])) {
+      ModulesInCommonWithGlobalIndex.push_back(Chain[I]);
+    }
+  }
+}
+
+void ModuleManager::moduleFileAccepted(ModuleFile *MF) {
+  if (!GlobalIndex || GlobalIndex->loadedModuleFile(MF))
+    return;
+
+  ModulesInCommonWithGlobalIndex.push_back(MF);
 }
 
 ModuleManager::ModuleManager(FileManager &FileMgr)
-  : FileMgr(FileMgr), GlobalIndex() { }
+  : FileMgr(FileMgr), GlobalIndex(), FirstVisitState(0) { }
 
 ModuleManager::~ModuleManager() {
   for (unsigned i = 0, e = Chain.size(); i != e; ++i)
     delete Chain[e - i - 1];
+  delete FirstVisitState;
 }
 
 void
 ModuleManager::visit(bool (*Visitor)(ModuleFile &M, void *UserData),
                      void *UserData,
-                     llvm::SmallPtrSet<const FileEntry *, 4> *ModuleFilesHit) {
+                     llvm::SmallPtrSet<ModuleFile *, 4> *ModuleFilesHit) {
   // If the visitation order vector is the wrong size, recompute the order.
   if (VisitOrder.size() != Chain.size()) {
     unsigned N = size();
@@ -226,14 +282,12 @@ ModuleManager::visit(bool (*Visitor)(ModuleFile &M, void *UserData),
 
     assert(VisitOrder.size() == N && "Visitation order is wrong?");
 
-    // We may need to update the set of modules we have in common with the
-    // global module index, since modules could have been added to the module
-    // manager since we loaded the global module index.
-    updateModulesInCommonWithGlobalIndex();
+    delete FirstVisitState;
+    FirstVisitState = 0;
   }
 
-  SmallVector<ModuleFile *, 4> Stack;
-  SmallVector<bool, 4> Visited(size(), false);
+  VisitState *State = allocateVisitState();
+  unsigned VisitNumber = State->NextVisitNumber++;
 
   // If the caller has provided us with a hit-set that came from the global
   // module index, mark every module file in common with the global module
@@ -242,19 +296,20 @@ ModuleManager::visit(bool (*Visitor)(ModuleFile &M, void *UserData),
     for (unsigned I = 0, N = ModulesInCommonWithGlobalIndex.size(); I != N; ++I)
     {
       ModuleFile *M = ModulesInCommonWithGlobalIndex[I];
-      if (!ModuleFilesHit->count(M->File))
-        Visited[M->Index] = true;
+      if (!ModuleFilesHit->count(M))
+        State->VisitNumber[M->Index] = VisitNumber;
     }
   }
 
   for (unsigned I = 0, N = VisitOrder.size(); I != N; ++I) {
     ModuleFile *CurrentModule = VisitOrder[I];
     // Should we skip this module file?
-    if (Visited[CurrentModule->Index])
+    if (State->VisitNumber[CurrentModule->Index] == VisitNumber)
       continue;
 
     // Visit the module.
-    Visited[CurrentModule->Index] = true;
+    assert(State->VisitNumber[CurrentModule->Index] == VisitNumber - 1);
+    State->VisitNumber[CurrentModule->Index] = VisitNumber;
     if (!Visitor(*CurrentModule, UserData))
       continue;
 
@@ -262,7 +317,6 @@ ModuleManager::visit(bool (*Visitor)(ModuleFile &M, void *UserData),
     // module that the current module depends on. To indicate this
     // behavior, we mark all of the reachable modules as having been visited.
     ModuleFile *NextModule = CurrentModule;
-    Stack.reserve(size());
     do {
       // For any module that this module depends on, push it on the
       // stack (if it hasn't already been marked as visited).
@@ -270,20 +324,21 @@ ModuleManager::visit(bool (*Visitor)(ModuleFile &M, void *UserData),
              M = NextModule->Imports.begin(),
              MEnd = NextModule->Imports.end();
            M != MEnd; ++M) {
-        if (!Visited[(*M)->Index]) {
-          Stack.push_back(*M);
-          Visited[(*M)->Index] = true;
+        if (State->VisitNumber[(*M)->Index] != VisitNumber) {
+          State->Stack.push_back(*M);
+          State->VisitNumber[(*M)->Index] = VisitNumber;
         }
       }
 
-      if (Stack.empty())
+      if (State->Stack.empty())
         break;
 
       // Pop the next module off the stack.
-      NextModule = Stack.back();
-      Stack.pop_back();
+      NextModule = State->Stack.pop_back_val();
     } while (true);
   }
+
+  returnVisitState(State);
 }
 
 /// \brief Perform a depth-first visit of the current module.
@@ -324,6 +379,24 @@ void ModuleManager::visitDepthFirst(bool (*Visitor)(ModuleFile &M, bool Preorder
     if (::visitDepthFirst(*Chain[I], Visitor, UserData, Visited))
       return;
   }
+}
+
+bool ModuleManager::lookupModuleFile(StringRef FileName,
+                                     off_t ExpectedSize,
+                                     time_t ExpectedModTime,
+                                     const FileEntry *&File) {
+  File = FileMgr.getFile(FileName, /*openFile=*/false, /*cacheFailure=*/false);
+
+  if (!File && FileName != "-") {
+    return false;
+  }
+
+  if ((ExpectedSize && ExpectedSize != File->getSize()) ||
+      (ExpectedModTime && ExpectedModTime != File->getModificationTime())) {
+    return true;
+  }
+
+  return false;
 }
 
 #ifndef NDEBUG

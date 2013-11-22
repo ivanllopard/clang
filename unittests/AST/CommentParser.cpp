@@ -12,6 +12,7 @@
 #include "clang/AST/CommentCommandTraits.h"
 #include "clang/AST/CommentLexer.h"
 #include "clang/AST/CommentSema.h"
+#include "clang/Basic/CommentOptions.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/FileManager.h"
@@ -38,7 +39,7 @@ protected:
       DiagID(new DiagnosticIDs()),
       Diags(DiagID, new DiagnosticOptions, new IgnoringDiagConsumer()),
       SourceMgr(Diags, FileMgr),
-      Traits(Allocator) {
+      Traits(Allocator, CommentOptions()) {
   }
 
   FileSystemOptions FileMgrOpts;
@@ -57,7 +58,7 @@ FullComment *CommentParserTest::parseString(const char *Source) {
   FileID File = SourceMgr.createFileIDForMemBuffer(Buf);
   SourceLocation Begin = SourceMgr.getLocForStartOfFile(File);
 
-  Lexer L(Allocator, Traits, Begin, Source, Source + strlen(Source));
+  Lexer L(Allocator, Diags, Traits, Begin, Source, Source + strlen(Source));
 
   Sema S(Allocator, SourceMgr, Diags, Traits, /*PP=*/ NULL);
   Parser P(L, S, Allocator, SourceMgr, Diags, Traits);
@@ -627,18 +628,43 @@ TEST_F(CommentParserTest, Basic3) {
   }
 }
 
-TEST_F(CommentParserTest, Paragraph1) {
+TEST_F(CommentParserTest, ParagraphSplitting1) {
   const char *Sources[] = {
     "// Aaa\n"
     "//\n"
     "// Bbb",
 
     "// Aaa\n"
+    "// \n"
+    "// Bbb",
+
+    "// Aaa\n"
+    "//\t\n"
+    "// Bbb",
+
+    "// Aaa\n"
     "//\n"
     "//\n"
     "// Bbb",
-  };
 
+    "/**\n"
+    " Aaa\n"
+    "\n"
+    " Bbb\n"
+    "*/",
+
+    "/**\n"
+    " Aaa\n"
+    " \n"
+    " Bbb\n"
+    "*/",
+
+    "/**\n"
+    " Aaa\n"
+    "\t \n"
+    " Bbb\n"
+    "*/",
+  };
 
   for (size_t i = 0, e = array_lengthof(Sources); i != e; i++) {
     FullComment *FC = parseString(Sources[i]);
@@ -649,7 +675,7 @@ TEST_F(CommentParserTest, Paragraph1) {
   }
 }
 
-TEST_F(CommentParserTest, Paragraph2) {
+TEST_F(CommentParserTest, Paragraph1) {
   const char *Source =
     "// \\brief Aaa\n"
     "//\n"
@@ -669,7 +695,7 @@ TEST_F(CommentParserTest, Paragraph2) {
   ASSERT_TRUE(HasParagraphCommentAt(FC, 2, " Bbb"));
 }
 
-TEST_F(CommentParserTest, Paragraph3) {
+TEST_F(CommentParserTest, Paragraph2) {
   const char *Source = "// \\brief \\author";
 
   FullComment *FC = parseString(Source);
@@ -693,7 +719,7 @@ TEST_F(CommentParserTest, Paragraph3) {
   }
 }
 
-TEST_F(CommentParserTest, Paragraph4) {
+TEST_F(CommentParserTest, Paragraph3) {
   const char *Source =
     "// \\brief Aaa\n"
     "// Bbb \\author\n"

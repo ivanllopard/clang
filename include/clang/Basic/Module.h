@@ -16,6 +16,7 @@
 #define LLVM_CLANG_BASIC_MODULE_H
 
 #include "clang/Basic/SourceLocation.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SetVector.h"
@@ -34,8 +35,10 @@ namespace clang {
   
 class DirectoryEntry;
 class FileEntry;
+class FileManager;
 class LangOptions;
 class TargetInfo;
+class IdentifierInfo;
   
 /// \brief Describes the name of a module.
 typedef SmallVector<std::pair<std::string, SourceLocation>, 2> ModuleId;
@@ -67,23 +70,35 @@ private:
   /// \brief The AST file if this is a top-level module which has a
   /// corresponding serialized AST file, or null otherwise.
   const FileEntry *ASTFile;
-  
-public:
-  /// \brief The headers that are part of this module.
-  SmallVector<const FileEntry *, 2> Headers;
-
-  /// \brief The headers that are explicitly excluded from this module.
-  SmallVector<const FileEntry *, 2> ExcludedHeaders;
 
   /// \brief The top-level headers associated with this module.
   llvm::SmallSetVector<const FileEntry *, 2> TopHeaders;
 
+  /// \brief top-level header filenames that aren't resolved to FileEntries yet.
+  std::vector<std::string> TopHeaderNames;
+
+  /// \brief Cache of modules visible to lookup in this module.
+  mutable llvm::DenseSet<const Module*> VisibleModulesCache;
+
+public:
+  /// \brief The headers that are part of this module.
+  SmallVector<const FileEntry *, 2> NormalHeaders;
+
+  /// \brief The headers that are explicitly excluded from this module.
+  SmallVector<const FileEntry *, 2> ExcludedHeaders;
+
+  /// \brief The headers that are private to this module.
+  llvm::SmallVector<const FileEntry *, 2> PrivateHeaders;
+
+  /// \brief An individual requirement: a feature name and a flag indicating
+  /// the required state of that feature.
+  typedef std::pair<std::string, bool> Requirement;
+
   /// \brief The set of language features required to use this module.
   ///
-  /// If any of these features is not present, the \c IsAvailable bit
-  /// will be false to indicate that this (sub)module is not
-  /// available.
-  SmallVector<std::string, 2> Requires;
+  /// If any of these requirements are not available, the \c IsAvailable bit
+  /// will be false to indicate that this (sub)module is not available.
+  SmallVector<Requirement, 2> Requirements;
 
   /// \brief Whether this module is available in the current
   /// translation unit.
@@ -115,7 +130,14 @@ public:
   /// \brief Whether, when inferring submodules, the inferr submodules should
   /// export all modules they import (e.g., the equivalent of "export *").
   unsigned InferExportWildcard : 1;
-  
+
+  /// \brief Whether the set of configuration macros is exhaustive.
+  ///
+  /// When the set of configuration macros is exhaustive, meaning
+  /// that no identifier not in this list should affect how the module is
+  /// built.
+  unsigned ConfigMacrosExhaustive : 1;
+
   /// \brief Describes the visibility of the various names within a
   /// particular module.
   enum NameVisibilityKind {
@@ -165,6 +187,12 @@ public:
   /// \brief The set of export declarations that have yet to be resolved.
   SmallVector<UnresolvedExportDecl, 2> UnresolvedExports;
 
+  /// \brief The directly used modules.
+  SmallVector<Module *, 2> DirectUses;
+
+  /// \brief The set of use declarations that have yet to be resolved.
+  SmallVector<ModuleId, 2> UnresolvedDirectUses;
+
   /// \brief A library or framework to link against when an entity from this
   /// module is used.
   struct LinkLibrary {
@@ -186,6 +214,35 @@ public:
   /// an entity from this module is used.
   llvm::SmallVector<LinkLibrary, 2> LinkLibraries;
 
+  /// \brief The set of "configuration macros", which are macros that
+  /// (intentionally) change how this module is built.
+  std::vector<std::string> ConfigMacros;
+
+  /// \brief An unresolved conflict with another module.
+  struct UnresolvedConflict {
+    /// \brief The (unresolved) module id.
+    ModuleId Id;
+
+    /// \brief The message provided to the user when there is a conflict.
+    std::string Message;
+  };
+
+  /// \brief The list of conflicts for which the module-id has not yet been
+  /// resolved.
+  std::vector<UnresolvedConflict> UnresolvedConflicts;
+
+  /// \brief A conflict between two modules.
+  struct Conflict {
+    /// \brief The module that this module conflicts with.
+    Module *Other;
+
+    /// \brief The message provided to the user when there is a conflict.
+    std::string Message;
+  };
+
+  /// \brief The list of conflicts.
+  std::vector<Conflict> Conflicts;
+
   /// \brief Construct a top-level module.
   explicit Module(StringRef Name, SourceLocation DefinitionLoc,
                   bool IsFramework)
@@ -193,7 +250,8 @@ public:
       IsAvailable(true), IsFromModuleFile(false), IsFramework(IsFramework), 
       IsExplicit(false), IsSystem(false),
       InferSubmodules(false), InferExplicitSubmodules(false),
-      InferExportWildcard(false), NameVisibility(Hidden) { }
+      InferExportWildcard(false), ConfigMacrosExhaustive(false),
+      NameVisibility(Hidden) { }
   
   /// \brief Construct a new module or submodule.
   Module(StringRef Name, SourceLocation DefinitionLoc, Module *Parent, 
@@ -213,12 +271,12 @@ public:
   ///
   /// \param Target The target options used for the current translation unit.
   ///
-  /// \param Feature If this module is unavailable, this parameter
-  /// will be set to one of the features that is required for use of
-  /// this module (but is not available).
+  /// \param Req If this module is unavailable, this parameter
+  /// will be set to one of the requirements that is not met for use of
+  /// this module.
   bool isAvailable(const LangOptions &LangOpts, 
                    const TargetInfo &Target,
-                   StringRef &Feature) const;
+                   Requirement &Req) const;
 
   /// \brief Determine whether this module is a submodule.
   bool isSubModule() const { return Parent != 0; }
@@ -292,25 +350,51 @@ public:
     return Umbrella && Umbrella.is<const DirectoryEntry *>();
   }
 
+  /// \brief Add a top-level header associated with this module.
+  void addTopHeader(const FileEntry *File) {
+    assert(File);
+    TopHeaders.insert(File);
+  }
+
+  /// \brief Add a top-level header filename associated with this module.
+  void addTopHeaderFilename(StringRef Filename) {
+    TopHeaderNames.push_back(Filename);
+  }
+
+  /// \brief The top-level headers associated with this module.
+  ArrayRef<const FileEntry *> getTopHeaders(FileManager &FileMgr);
+
   /// \brief Add the given feature requirement to the list of features
   /// required by this module.
   ///
   /// \param Feature The feature that is required by this module (and
   /// its submodules).
   ///
+  /// \param RequiredState The required state of this feature: \c true
+  /// if it must be present, \c false if it must be absent.
+  ///
   /// \param LangOpts The set of language options that will be used to
   /// evaluate the availability of this feature.
   ///
   /// \param Target The target options that will be used to evaluate the
   /// availability of this feature.
-  void addRequirement(StringRef Feature, const LangOptions &LangOpts,
+  void addRequirement(StringRef Feature, bool RequiredState,
+                      const LangOptions &LangOpts,
                       const TargetInfo &Target);
 
   /// \brief Find the submodule with the given name.
   ///
   /// \returns The submodule if found, or NULL otherwise.
   Module *findSubmodule(StringRef Name) const;
-  
+
+  /// \brief Determine whether the specified module would be visible to
+  /// a lookup at the end of this module.
+  bool isModuleVisible(const Module *M) const {
+    if (VisibleModulesCache.empty())
+      buildVisibleModulesCache();
+    return VisibleModulesCache.count(M);
+  }
+
   typedef std::vector<Module *>::iterator submodule_iterator;
   typedef std::vector<Module *>::const_iterator submodule_const_iterator;
   
@@ -318,7 +402,13 @@ public:
   submodule_const_iterator submodule_begin() const {return SubModules.begin();}
   submodule_iterator submodule_end()   { return SubModules.end(); }
   submodule_const_iterator submodule_end() const { return SubModules.end(); }
-  
+
+  /// \brief Appends this module's list of exported modules to \p Exported.
+  ///
+  /// This provides a subset of immediately imported modules (the ones that are
+  /// directly exported), not the complete set of exported modules.
+  void getExportedModules(SmallVectorImpl<Module *> &Exported) const;
+
   static StringRef getModuleInputBufferName() {
     return "<module-includes>";
   }
@@ -329,6 +419,9 @@ public:
   
   /// \brief Dump the contents of this module to the given output stream.
   void dump() const;
+
+private:
+  void buildVisibleModulesCache() const;
 };
 
 } // end namespace clang

@@ -213,11 +213,11 @@ void MallocOverflowSecurityChecker::OutputPossibleOverflows(
        e = PossibleMallocOverflows.end();
        i != e;
        ++i) {
-    SourceRange R = i->mulop->getSourceRange();
     BR.EmitBasicReport(D, "malloc() size overflow", categories::UnixAPI,
       "the computation of the size of the memory allocation may overflow",
       PathDiagnosticLocation::createOperatorLoc(i->mulop,
-                                                BR.getSourceManager()), &R, 1);
+                                                BR.getSourceManager()),
+      i->mulop->getSourceRange());
   }
 }
 
@@ -236,7 +236,7 @@ void MallocOverflowSecurityChecker::checkASTCodeBody(const Decl *D,
     CFGBlock *block = *it;
     for (CFGBlock::iterator bi = block->begin(), be = block->end();
          bi != be; ++bi) {
-      if (const CFGStmt *CS = bi->getAs<CFGStmt>()) {
+      if (Optional<CFGStmt> CS = bi->getAs<CFGStmt>()) {
         if (const CallExpr *TheCall = dyn_cast<CallExpr>(CS->getStmt())) {
           // Get the callee.
           const FunctionDecl *FD = TheCall->getDirectCallee();

@@ -20,7 +20,9 @@
 namespace clang {
   class ASTUnit;
   class CIndexer;
-  class SimpleFormatContext;
+namespace index {
+class CommentToXMLConverter;
+} // namespace index
 } // namespace clang
 
 struct CXTranslationUnitImpl {
@@ -29,8 +31,7 @@ struct CXTranslationUnitImpl {
   clang::cxstring::CXStringPool *StringPool;
   void *Diagnostics;
   void *OverridenCursorsPool;
-  clang::SimpleFormatContext *FormatContext;
-  unsigned FormatInMemoryUniqueId;
+  clang::index::CommentToXMLConverter *CommentToXML;
 };
 
 namespace clang {
@@ -39,6 +40,8 @@ namespace cxtu {
 CXTranslationUnitImpl *MakeCXTranslationUnit(CIndexer *CIdx, ASTUnit *AU);
 
 static inline ASTUnit *getASTUnit(CXTranslationUnit TU) {
+  if (!TU)
+    return 0;
   return TU->TheASTUnit;
 }
 

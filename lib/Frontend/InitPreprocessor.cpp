@@ -29,6 +29,12 @@
 #include "llvm/Support/Path.h"
 using namespace clang;
 
+static bool MacroBodyEndsInBackslash(StringRef MacroBody) {
+  while (!MacroBody.empty() && isWhitespace(MacroBody.back()))
+    MacroBody = MacroBody.drop_back();
+  return !MacroBody.empty() && MacroBody.back() == '\\';
+}
+
 // Append a #define line to Buf for Macro.  Macro should be of the form XXX,
 // in which case we emit "#define XXX 1" or "XXX=Y z W" in which case we emit
 // "#define XXX Y z W".  To get a #define with no value, use "XXX=".
@@ -43,7 +49,14 @@ static void DefineBuiltinMacro(MacroBuilder &Builder, StringRef Macro,
     if (End != StringRef::npos)
       Diags.Report(diag::warn_fe_macro_contains_embedded_newline)
         << MacroName;
-    Builder.defineMacro(MacroName, MacroBody.substr(0, End));
+    MacroBody = MacroBody.substr(0, End);
+    // We handle macro bodies which end in a backslash by appending an extra
+    // backslash+newline.  This makes sure we don't accidentally treat the
+    // backslash as a line continuation marker.
+    if (MacroBodyEndsInBackslash(MacroBody))
+      Builder.defineMacro(MacroName, Twine(MacroBody) + "\\\n");
+    else
+      Builder.defineMacro(MacroName, MacroBody);
   } else {
     // Push "macroname 1".
     Builder.defineMacro(Macro);
@@ -302,12 +315,13 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
     else if (!LangOpts.GNUMode && LangOpts.Digraphs)
       Builder.defineMacro("__STDC_VERSION__", "199409L");
   } else {
-    // FIXME: LangOpts.CPlusPlus1y
-
+    // FIXME: Use the right value for __cplusplus for C++1y once one is chosen.
+    if (LangOpts.CPlusPlus1y)
+      Builder.defineMacro("__cplusplus", "201305L");
     // C++11 [cpp.predefined]p1:
     //   The name __cplusplus is defined to the value 201103L when compiling a
     //   C++ translation unit.
-    if (LangOpts.CPlusPlus11)
+    else if (LangOpts.CPlusPlus11)
       Builder.defineMacro("__cplusplus", "201103L");
     // C++03 [cpp.predefined]p1:
     //   The name __cplusplus is defined to the value 199711L when compiling a
@@ -315,6 +329,14 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
     else
       Builder.defineMacro("__cplusplus", "199711L");
   }
+
+  // In C11 these are environment macros. In C++11 they are only defined
+  // as part of <cuchar>. To prevent breakage when mixing C and C++
+  // code, define these macros unconditionally. We can define them
+  // unconditionally, as Clang always uses UTF-16 and UTF-32 for 16-bit
+  // and 32-bit character literals.
+  Builder.defineMacro("__STDC_UTF_16__", "1");
+  Builder.defineMacro("__STDC_UTF_32__", "1");
 
   if (LangOpts.ObjC1)
     Builder.defineMacro("__OBJC__");
@@ -393,6 +415,22 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
 
     if (LangOpts.ObjCRuntime.isNeXTFamily())
       Builder.defineMacro("__NEXT_RUNTIME__");
+
+    if (LangOpts.ObjCRuntime.getKind() == ObjCRuntime::ObjFW) {
+      VersionTuple tuple = LangOpts.ObjCRuntime.getVersion();
+
+      unsigned minor = 0;
+      if (tuple.getMinor().hasValue())
+        minor = tuple.getMinor().getValue();
+
+      unsigned subminor = 0;
+      if (tuple.getSubminor().hasValue())
+        subminor = tuple.getSubminor().getValue();
+
+      Builder.defineMacro("__OBJFW_RUNTIME_ABI__",
+                          Twine(tuple.getMajor() * 10000 + minor * 100 +
+                                subminor));
+    }
 
     Builder.defineMacro("IBOutlet", "__attribute__((iboutlet))");
     Builder.defineMacro("IBOutletCollection(ClassName)",
@@ -483,13 +521,14 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   assert(TI.getCharWidth() == 8 && "Only support 8-bit char so far");
   Builder.defineMacro("__CHAR_BIT__", "8");
 
-  DefineTypeSize("__SCHAR_MAX__", TI.getCharWidth(), "", true, Builder);
+  DefineTypeSize("__SCHAR_MAX__", TargetInfo::SignedChar, TI, Builder);
   DefineTypeSize("__SHRT_MAX__", TargetInfo::SignedShort, TI, Builder);
   DefineTypeSize("__INT_MAX__", TargetInfo::SignedInt, TI, Builder);
   DefineTypeSize("__LONG_MAX__", TargetInfo::SignedLong, TI, Builder);
   DefineTypeSize("__LONG_LONG_MAX__", TargetInfo::SignedLongLong, TI, Builder);
   DefineTypeSize("__WCHAR_MAX__", TI.getWCharType(), TI, Builder);
   DefineTypeSize("__INTMAX_MAX__", TI.getIntMaxType(), TI, Builder);
+  DefineTypeSize("__SIZE_MAX__", TI.getSizeType(), TI, Builder);
 
   DefineTypeSizeof("__SIZEOF_DOUBLE__", TI.getDoubleWidth(), TI, Builder);
   DefineTypeSizeof("__SIZEOF_FLOAT__", TI.getFloatWidth(), TI, Builder);
@@ -784,15 +823,16 @@ void clang::InitializePreprocessor(Preprocessor &PP,
     AddImplicitIncludeMacros(Builder, InitOpts.MacroIncludes[i],
                              PP.getFileManager());
 
+  // Process -include-pch/-include-pth directives.
+  if (!InitOpts.ImplicitPCHInclude.empty())
+    AddImplicitIncludePCH(Builder, PP, InitOpts.ImplicitPCHInclude);
+  if (!InitOpts.ImplicitPTHInclude.empty())
+    AddImplicitIncludePTH(Builder, PP, InitOpts.ImplicitPTHInclude);
+
   // Process -include directives.
   for (unsigned i = 0, e = InitOpts.Includes.size(); i != e; ++i) {
     const std::string &Path = InitOpts.Includes[i];
-    if (Path == InitOpts.ImplicitPTHInclude)
-      AddImplicitIncludePTH(Builder, PP, Path);
-    else if (Path == InitOpts.ImplicitPCHInclude)
-      AddImplicitIncludePCH(Builder, PP, Path);
-    else
-      AddImplicitInclude(Builder, Path, PP.getFileManager());
+    AddImplicitInclude(Builder, Path, PP.getFileManager());
   }
 
   // Exit the command line and go back to <built-in> (2 is LC_LEAVE).
