@@ -4370,6 +4370,222 @@ public:
 } // end anonymous namespace.
 
 namespace {
+class Nios2TargetInfoBase : public TargetInfo {
+  std::string CPU;
+
+protected:
+  std::string ABI;
+
+public:
+  Nios2TargetInfoBase(const std::string& triple,
+                     const std::string& ABIStr,
+                     const std::string& CPUStr)
+    : TargetInfo(triple),
+      CPU(CPUStr),
+      ABI(ABIStr)
+  {}
+
+  virtual const char *getABI() const { return ABI.c_str(); }
+  virtual bool setABI(const std::string &Name) = 0;
+  virtual bool setCPU(const std::string &Name) {
+    CPU = Name;
+    return true;
+  }
+  void getDefaultFeatures(llvm::StringMap<bool> &Features) const {
+    Features[ABI] = true;
+    Features[CPU] = true;
+  }
+
+  virtual void getTargetDefines(const LangOptions &Opts,
+                                MacroBuilder &Builder) const {
+    DefineStd(Builder, "nios2", Opts);
+    Builder.defineMacro("_nios2");
+    //Builder.defineMacro("__REGISTER_PREFIX__", "");
+
+    //Builder.defineMacro("_MIPS_SZPTR", Twine(getPointerWidth(0)));
+    //Builder.defineMacro("_MIPS_SZINT", Twine(getIntWidth()));
+    //Builder.defineMacro("_MIPS_SZLONG", Twine(getLongWidth()));
+
+    Builder.defineMacro("_NIOS2_ARCH", "\"" + CPU + "\"");
+    Builder.defineMacro("_NIOS2_ARCH_" + StringRef(CPU).upper());
+  }
+
+  //virtual void getTargetBuiltins(const Builtin::Info *&Records,
+  //                               unsigned &NumRecords) const {
+  //  Records = BuiltinInfo;
+  //  NumRecords = clang::Mips::LastTSBuiltin - Builtin::FirstTSBuiltin;
+  //}
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "nios2";
+  }
+  virtual BuiltinVaListKind getBuiltinVaListKind() const {
+    return TargetInfo::VoidPtrBuiltinVaList;
+  }
+  virtual void getGCCRegNames(const char * const *&Names,
+                              unsigned &NumNames) const {
+    static const char * const GCCRegNames[] = {
+      // CPU register names
+      // Must match second column of GCCRegAliases
+      "$0",   "$1",   "$2",   "$3",   "$4",   "$5",   "$6",   "$7",
+      "$8",   "$9",   "$10",  "$11",  "$12",  "$13",  "$14",  "$15",
+      "$16",  "$17",  "$18",  "$19",  "$20",  "$21",  "$22",  "$23",
+      "$24",  "$25",  "$26",  "$27",  "$28",  "$29",  "$30",  "$31",
+      // Floating point register names
+      "$f0",  "$f1",  "$f2",  "$f3",  "$f4",  "$f5",  "$f6",  "$f7",
+      "$f8",  "$f9",  "$f10", "$f11", "$f12", "$f13", "$f14", "$f15",
+      "$f16", "$f17", "$f18", "$f19", "$f20", "$f21", "$f22", "$f23",
+      "$f24", "$f25", "$f26", "$f27", "$f28", "$f29", "$f30", "$f31",
+      // Hi/lo and condition register names
+      "hi",   "lo",   "",     "$fcc0","$fcc1","$fcc2","$fcc3","$fcc4",
+      "$fcc5","$fcc6","$fcc7"
+    };
+    Names = GCCRegNames;
+    NumNames = llvm::array_lengthof(GCCRegNames);
+  }
+  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                unsigned &NumAliases) const = 0;
+  virtual bool validateAsmConstraint(const char *&Name,
+                                     TargetInfo::ConstraintInfo &Info) const {
+    switch (*Name) {
+    default:
+      return false;
+        
+    case 'r': // CPU registers.
+    case 'd': // Equivalent to "r" unless generating MIPS16 code.
+    case 'y': // Equivalent to "r", backwards compatibility only.
+    case 'f': // floating-point registers.
+    case 'c': // $25 for indirect jumps
+    case 'l': // lo register
+    case 'x': // hilo register pair
+      Info.setAllowsRegister();
+      return true;
+    }
+  }
+
+  virtual const char *getClobbers() const {
+    // FIXME: Implement!
+    return "";
+  }
+
+  //virtual bool setFeatureEnabled(llvm::StringMap<bool> &Features,
+  //                               StringRef Name,
+  //                               bool Enabled) const {
+  //  if (Name == "soft-float" || Name == "single-float" ||
+  //      Name == "o32" || Name == "n32" || Name == "n64" || Name == "eabi" ||
+  //      Name == "mips32" || Name == "mips32r2" ||
+  //      Name == "mips64" || Name == "mips64r2" ||
+  //      Name == "mips16" || Name == "dsp" || Name == "dspr2") {
+  //    Features[Name] = Enabled;
+  //    return true;
+  //  }
+  //  return false;
+  //}
+
+  //virtual void HandleTargetFeatures(std::vector<std::string> &Features) {
+  //  IsMips16 = false;
+  //  FloatABI = HardFloat;
+  //  DspRev = NoDSP;
+
+  //  for (std::vector<std::string>::iterator it = Features.begin(),
+  //       ie = Features.end(); it != ie; ++it) {
+  //    if (*it == "+single-float")
+  //      FloatABI = SingleFloat;
+  //    else if (*it == "+soft-float")
+  //      FloatABI = SoftFloat;
+  //    else if (*it == "+mips16")
+  //      IsMips16 = true;
+  //    else if (*it == "+dsp")
+  //      DspRev = std::max(DspRev, DSP1);
+  //    else if (*it == "+dspr2")
+  //      DspRev = std::max(DspRev, DSP2);
+  //  }
+
+  //  // Remove front-end specific option.
+  //  std::vector<std::string>::iterator it =
+  //    std::find(Features.begin(), Features.end(), "+soft-float");
+  //  if (it != Features.end())
+  //    Features.erase(it);
+  //}
+};
+
+//const Builtin::Info MipsTargetInfoBase::BuiltinInfo[] = {
+//#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+//#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
+//                                              ALL_LANGUAGES },
+//#include "clang/Basic/BuiltinsMips.def"
+//};
+
+class Nios2StdTargetInfo : public Nios2TargetInfoBase {
+public:
+  Nios2StdTargetInfo(const std::string& triple) :
+    Nios2TargetInfoBase(triple, "o32", "nios2") {
+    SizeType = UnsignedInt;
+    PtrDiffType = SignedInt;
+    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 32;
+  }
+  virtual bool setABI(const std::string &Name) {
+    if ((Name == "o32") || (Name == "eabi")) {
+      ABI = Name;
+      return true;
+    } else
+      return false;
+  }
+  //virtual void getTargetDefines(const LangOptions &Opts,
+  //                              MacroBuilder &Builder) const {
+  //  MipsTargetInfoBase::getTargetDefines(Opts, Builder);
+
+  //  if (ABI == "o32") {
+  //    Builder.defineMacro("__mips_o32");
+  //    Builder.defineMacro("_ABIO32", "1");
+  //    Builder.defineMacro("_MIPS_SIM", "_ABIO32");
+  //  }
+  //  else if (ABI == "eabi")
+  //    Builder.defineMacro("__mips_eabi");
+  //  else
+  //    llvm_unreachable("Invalid ABI for Mips32.");
+  //}
+  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                unsigned &NumAliases) const {
+    static const TargetInfo::GCCRegAlias GCCRegAliases[] = {
+      { { "at" },  "$1" },
+      { { "v0" },  "$2" },
+      { { "v1" },  "$3" },
+      { { "a0" },  "$4" },
+      { { "a1" },  "$5" },
+      { { "a2" },  "$6" },
+      { { "a3" },  "$7" },
+      { { "t0" },  "$8" },
+      { { "t1" },  "$9" },
+      { { "t2" }, "$10" },
+      { { "t3" }, "$11" },
+      { { "t4" }, "$12" },
+      { { "t5" }, "$13" },
+      { { "t6" }, "$14" },
+      { { "t7" }, "$15" },
+      { { "s0" }, "$16" },
+      { { "s1" }, "$17" },
+      { { "s2" }, "$18" },
+      { { "s3" }, "$19" },
+      { { "s4" }, "$20" },
+      { { "s5" }, "$21" },
+      { { "s6" }, "$22" },
+      { { "s7" }, "$23" },
+      { { "t8" }, "$24" },
+      { { "t9" }, "$25" },
+      { { "k0" }, "$26" },
+      { { "k1" }, "$27" },
+      { { "gp" }, "$28" },
+      { { "sp","$sp" }, "$29" },
+      { { "fp","$fp" }, "$30" },
+      { { "ra" }, "$31" }
+    };
+    Aliases = GCCRegAliases;
+    NumAliases = llvm::array_lengthof(GCCRegAliases);
+  }
+};
+}
+
+namespace {
 class PNaClTargetInfo : public TargetInfo {
 public:
   PNaClTargetInfo(const std::string& triple) : TargetInfo(triple) {
@@ -4566,6 +4782,9 @@ static TargetInfo *AllocateTarget(const std::string &T) {
 
   case llvm::Triple::msp430:
     return new MSP430TargetInfo(T);
+
+  case llvm::Triple::nios2:
+    return new Nios2StdTargetInfo(T);
 
   case llvm::Triple::mips:
     switch (os) {
