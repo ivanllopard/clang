@@ -5300,7 +5300,7 @@ protected:
   std::string ABI;
 
 public:
-  Nios2TargetInfoBase(const std::string& triple,
+  Nios2TargetInfoBase(const llvm::Triple& triple,
                      const std::string& ABIStr,
                      const std::string& CPUStr)
     : TargetInfo(triple),
@@ -5333,11 +5333,9 @@ public:
     Builder.defineMacro("_NIOS2_ARCH_" + StringRef(CPU).upper());
   }
 
-  //virtual void getTargetBuiltins(const Builtin::Info *&Records,
-  //                               unsigned &NumRecords) const {
-  //  Records = BuiltinInfo;
-  //  NumRecords = clang::Mips::LastTSBuiltin - Builtin::FirstTSBuiltin;
-  //}
+  virtual void getTargetBuiltins(const Builtin::Info *&Records,
+                                 unsigned &NumRecords) const {
+  }
   virtual bool hasFeature(StringRef Feature) const {
     return Feature == "nios2";
   }
@@ -5431,16 +5429,9 @@ public:
   //}
 };
 
-//const Builtin::Info MipsTargetInfoBase::BuiltinInfo[] = {
-//#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
-//#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
-//                                              ALL_LANGUAGES },
-//#include "clang/Basic/BuiltinsMips.def"
-//};
-
 class Nios2StdTargetInfo : public Nios2TargetInfoBase {
 public:
-  Nios2StdTargetInfo(const std::string& triple) :
+  Nios2StdTargetInfo(const llvm::Triple& triple) :
     Nios2TargetInfoBase(triple, "o32", "nios2") {
     SizeType = UnsignedInt;
     PtrDiffType = SignedInt;
@@ -5786,7 +5777,7 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
     return new MSP430TargetInfo(Triple);
 
   case llvm::Triple::nios2:
-    return new Nios2StdTargetInfo(T);
+    return new Nios2StdTargetInfo(Triple);
 
   case llvm::Triple::mips:
     switch (os) {
