@@ -73,6 +73,7 @@ def m_x86_Features_Group  : OptionGroup<"<m x86 features group>">, Group<m_Group
 def m_hexagon_Features_Group  : OptionGroup<"<m hexagon features group>">, Group<m_Group>;
 def m_arm_Features_Group  : OptionGroup<"<m arm features group>">, Group<m_Group>;
 def m_ppc_Features_Group  : OptionGroup<"<m ppc features group>">, Group<m_Group>;
+def m_nios2_Features_Group: OptionGroup<"<m nios2 features group>">, Group<m_Group>;
 def opencl_Group          : OptionGroup<"<opencl group>">;
 def u_Group               : OptionGroup<"<u group>">;
 
@@ -1056,6 +1057,11 @@ def mpopcntd : Flag<["-"], "mpopcntd">, Group<m_ppc_Features_Group>;
 def mno_popcntd : Flag<["-"], "mno-popcntd">, Group<m_ppc_Features_Group>;
 def mqpx : Flag<["-"], "mqpx">, Group<m_ppc_Features_Group>;
 def mno_qpx : Flag<["-"], "mno-qpx">, Group<m_ppc_Features_Group>;
+
+def mhw_div   : Flag<["-"], "mhw-div">, Group<m_nios2_Features_Group>;
+def mno_hw_div : Flag<["-"], "mno-hw-div">, Group<m_nios2_Features_Group>;
+def mhw_mul   : Flag<["-"], "mhw-mul">, Group<m_nios2_Features_Group>;
+def mno_hw_mul : Flag<["-"], "mno-hw-mul">, Group<m_nios2_Features_Group>;
 
 def faltivec : Flag<["-"], "faltivec">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Enable AltiVec vector initializer syntax">;

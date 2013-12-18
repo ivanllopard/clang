@@ -5387,52 +5387,19 @@ public:
     // FIXME: Implement!
     return "";
   }
-
-  //virtual bool setFeatureEnabled(llvm::StringMap<bool> &Features,
-  //                               StringRef Name,
-  //                               bool Enabled) const {
-  //  if (Name == "soft-float" || Name == "single-float" ||
-  //      Name == "o32" || Name == "n32" || Name == "n64" || Name == "eabi" ||
-  //      Name == "mips32" || Name == "mips32r2" ||
-  //      Name == "mips64" || Name == "mips64r2" ||
-  //      Name == "mips16" || Name == "dsp" || Name == "dspr2") {
-  //    Features[Name] = Enabled;
-  //    return true;
-  //  }
-  //  return false;
-  //}
-
-  //virtual void HandleTargetFeatures(std::vector<std::string> &Features) {
-  //  IsMips16 = false;
-  //  FloatABI = HardFloat;
-  //  DspRev = NoDSP;
-
-  //  for (std::vector<std::string>::iterator it = Features.begin(),
-  //       ie = Features.end(); it != ie; ++it) {
-  //    if (*it == "+single-float")
-  //      FloatABI = SingleFloat;
-  //    else if (*it == "+soft-float")
-  //      FloatABI = SoftFloat;
-  //    else if (*it == "+mips16")
-  //      IsMips16 = true;
-  //    else if (*it == "+dsp")
-  //      DspRev = std::max(DspRev, DSP1);
-  //    else if (*it == "+dspr2")
-  //      DspRev = std::max(DspRev, DSP2);
-  //  }
-
-  //  // Remove front-end specific option.
-  //  std::vector<std::string>::iterator it =
-  //    std::find(Features.begin(), Features.end(), "+soft-float");
-  //  if (it != Features.end())
-  //    Features.erase(it);
-  //}
 };
 
 class Nios2StdTargetInfo : public Nios2TargetInfoBase {
+protected:
+  bool HasHWMul;
+  bool HasHWDiv;
+
 public:
   Nios2StdTargetInfo(const llvm::Triple& triple) :
-    Nios2TargetInfoBase(triple, "o32", "nios2") {
+    Nios2TargetInfoBase(triple, "o32", "nios2"),
+    HasHWMul(false),
+    HasHWDiv(false)
+  {
     SizeType = UnsignedInt;
     PtrDiffType = SignedInt;
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 32;
@@ -5443,6 +5410,38 @@ public:
       return true;
     } else
       return false;
+  }
+
+  virtual bool hasFeature(StringRef Feature) const {
+    return llvm::StringSwitch<bool>(Feature)
+        .Case("hw-mul", HasHWMul)
+        .Case("hw-div", HasHWDiv)
+        .Default(false);
+  }
+  /// handleTargetFeatures - Perform initialization based on the user
+  /// configured set of features.
+  virtual bool handleTargetFeatures(std::vector<std::string> &Features,
+                                           DiagnosticsEngine &Diags) {
+    // Remember the maximum enabled sselevel.
+    for (unsigned i = 0, e = Features.size(); i !=e; ++i) {
+      // Ignore disabled features.
+      if (Features[i][0] == '-')
+        continue;
+
+      StringRef Feature = StringRef(Features[i]).substr(1);
+
+      if (Feature == "hw-mul") {
+        HasHWMul = true;
+        continue;
+      }
+
+      if (Feature == "hw-div") {
+        HasHWDiv = true;
+        continue;
+      }
+    }
+
+    return true;
   }
   //virtual void getTargetDefines(const LangOptions &Opts,
   //                              MacroBuilder &Builder) const {
