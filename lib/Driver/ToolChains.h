@@ -694,6 +694,32 @@ public:
                                    llvm::opt::ArgStringList &CmdArgs) const;
 };
 
+class LLVM_LIBRARY_VISIBILITY Nios2_TC : public Linux {
+protected:
+  GCCVersion GCCLibAndIncVersion;
+  virtual Tool *buildAssembler() const;
+  virtual Tool *buildLinker() const;
+
+public:
+  Nios2_TC(const Driver &D, const llvm::Triple &Triple,
+             const llvm::opt::ArgList &Args);
+  ~Nios2_TC();
+
+  virtual void
+  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                            llvm::opt::ArgStringList &CC1Args) const;
+  virtual void
+  AddClangCXXStdlibIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                               llvm::opt::ArgStringList &CC1Args) const;
+  virtual CXXStdlibType GetCXXStdlibType(const llvm::opt::ArgList &Args) const;
+
+  StringRef GetGCCLibAndIncVersion() const { return GCCLibAndIncVersion.Text; }
+
+  static std::string GetGnuDir(const std::string &InstalledDir);
+
+  static StringRef GetTargetCPU(const llvm::opt::ArgList &Args);
+};
+
 } // end namespace toolchains
 } // end namespace driver
 } // end namespace clang

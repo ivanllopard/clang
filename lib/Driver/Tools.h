@@ -660,6 +660,41 @@ namespace XCore {
   };
 } // end namespace XCore.
 
+namespace nios2 {
+  class LLVM_LIBRARY_VISIBILITY Assemble : public Tool {
+  public:
+    Assemble(const ToolChain &TC) : Tool("nios2::Assemble",
+      "nios-elf-as", TC) {}
+
+    virtual bool hasIntegratedCPP() const { return false; }
+
+    virtual void RenderExtraToolArgs(const JobAction &JA,
+                                     llvm::opt::ArgStringList &CmdArgs) const;
+    virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                              const InputInfo &Output,
+                              const InputInfoList &Inputs,
+                              const llvm::opt::ArgList &TCArgs,
+                              const char *LinkingOutput) const;
+  };
+
+  class LLVM_LIBRARY_VISIBILITY Link : public Tool {
+  public:
+    Link(const ToolChain &TC) : Tool("nios2::Link",
+      "nios2-elf-ld", TC) {}
+
+    virtual bool hasIntegratedCPP() const { return false; }
+    virtual bool isLinkJob() const { return true; }
+
+    virtual void RenderExtraToolArgs(const JobAction &JA,
+                                     llvm::opt::ArgStringList &CmdArgs) const;
+    virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                              const InputInfo &Output,
+                              const InputInfoList &Inputs,
+                              const llvm::opt::ArgList &TCArgs,
+                              const char *LinkingOutput) const;
+  };
+} // end namespace nios2.
+
 
 } // end namespace toolchains
 } // end namespace driver

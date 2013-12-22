@@ -1043,6 +1043,14 @@ static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
                    "fp64");
 }
 
+static void getNios2TargetFeatures(const Driver &D, const ArgList &Args,
+                                  std::vector<const char *> &Features) {
+  AddTargetFeature(Args, Features, options::OPT_mhw_mul,
+      options::OPT_mno_hw_mul, "hw-mul");
+  AddTargetFeature(Args, Features, options::OPT_mhw_div,
+      options::OPT_mno_hw_div, "hw-div");
+}
+
 void Clang::AddMIPSTargetArgs(const ArgList &Args,
                               ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
@@ -1376,6 +1384,9 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
 
   case llvm::Triple::r600:
     return getR600TargetGPU(Args);
+
+  case llvm::Triple::nios2:
+    return toolchains::Nios2_TC::GetTargetCPU(Args).str();
   }
 }
 
@@ -1503,6 +1514,9 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     getMIPSTargetFeatures(D, Args, Features);
     break;
 
+  case llvm::Triple::nios2:
+    getNios2TargetFeatures(D, Args, Features);
+    break;
   case llvm::Triple::arm:
   case llvm::Triple::thumb:
     getARMTargetFeatures(D, Triple, Args, Features);
@@ -7043,3 +7057,245 @@ void XCore::Link::ConstructJob(Compilation &C, const JobAction &JA,
     Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
+
+// Nios2 tools start.
+void nios2::Assemble::RenderExtraToolArgs(const JobAction &JA,
+                                        ArgStringList &CmdArgs) const {
+
+}
+void nios2::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
+                               const InputInfo &Output,
+                               const InputInfoList &Inputs,
+                               const ArgList &Args,
+                               const char *LinkingOutput) const {
+
+  const Driver &D = getToolChain().getDriver();
+  ArgStringList CmdArgs;
+
+  RenderExtraToolArgs(JA, CmdArgs);
+
+  if (Output.isFilename()) {
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+  } else {
+    assert(Output.isNothing() && "Unexpected output");
+    CmdArgs.push_back("-fsyntax-only");
+  }
+
+  //std::string SmallDataThreshold = GetHexagonSmallDataThresholdValue(Args);
+  //if (!SmallDataThreshold.empty())
+  //  CmdArgs.push_back(
+  //    Args.MakeArgString(std::string("-G") + SmallDataThreshold));
+
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
+                       options::OPT_Xassembler);
+
+  // Only pass -x if gcc will understand it; otherwise hope gcc
+  // understands the suffix correctly. The main use case this would go
+  // wrong in is for linker inputs if they happened to have an odd
+  // suffix; really the only way to get this to happen is a command
+  // like '-x foobar a.c' which will treat a.c like a linker input.
+  //
+  // FIXME: For the linker case specifically, can we safely convert
+  // inputs into '-Wl,' options?
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM or AST inputs to a generic gcc.
+    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+    else if (II.getType() == types::TY_AST)
+      D.Diag(clang::diag::err_drv_no_ast_support)
+        << getToolChain().getTripleString();
+    else if (II.getType() == types::TY_ModuleFile)
+      D.Diag(diag::err_drv_no_module_support)
+      << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      // Don't render as input, we need gcc to do the translations. FIXME: Pranav: What is this ?
+      II.getInputArg().render(Args, CmdArgs);
+  }
+
+  const char *GCCName = "nios2-elf-as";
+  const char *Exec =
+    Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
+  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
+
+}
+void nios2::Link::RenderExtraToolArgs(const JobAction &JA,
+                                    ArgStringList &CmdArgs) const {
+  // The types are (hopefully) good enough.
+}
+
+void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                               const InputInfo &Output,
+                               const InputInfoList &Inputs,
+                               const ArgList &Args,
+                               const char *LinkingOutput) const {
+
+  const toolchains::Nios2_TC& ToolChain =
+    static_cast<const toolchains::Nios2_TC&>(getToolChain());
+  const Driver &D = ToolChain.getDriver();
+
+  ArgStringList CmdArgs;
+
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  bool hasStaticArg = Args.hasArg(options::OPT_static);
+  bool buildingLib = Args.hasArg(options::OPT_shared);
+  bool buildPIE = Args.hasArg(options::OPT_pie);
+  bool incStdLib = !Args.hasArg(options::OPT_nostdlib);
+  bool incStartFiles = !Args.hasArg(options::OPT_nostartfiles);
+  bool incDefLibs = !Args.hasArg(options::OPT_nodefaultlibs);
+  bool useShared = buildingLib && !hasStaticArg;
+
+  //----------------------------------------------------------------------------
+  // Silence warnings for various options
+  //----------------------------------------------------------------------------
+
+  Args.ClaimAllArgs(options::OPT_g_Group);
+  Args.ClaimAllArgs(options::OPT_emit_llvm);
+  Args.ClaimAllArgs(options::OPT_w); // Other warning options are already
+                                     // handled somewhere else.
+  Args.ClaimAllArgs(options::OPT_static_libgcc);
+
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  for (std::vector<std::string>::const_iterator i = ToolChain.ExtraOpts.begin(),
+         e = ToolChain.ExtraOpts.end();
+       i != e; ++i)
+    CmdArgs.push_back(i->c_str());
+
+  std::string MarchString = toolchains::Nios2_TC::GetTargetCPU(Args);
+  CmdArgs.push_back(Args.MakeArgString("-m" + MarchString));
+
+  if (buildingLib) {
+    CmdArgs.push_back("-shared");
+    CmdArgs.push_back("-call_shared"); // should be the default, but doing as
+                                       // nios-elf-gcc does
+  }
+
+  if (hasStaticArg)
+    CmdArgs.push_back("-static");
+
+  if (buildPIE && !buildingLib)
+    CmdArgs.push_back("-pie");
+
+  //std::string SmallDataThreshold = GetHexagonSmallDataThresholdValue(Args);
+  //if (!SmallDataThreshold.empty()) {
+  //  CmdArgs.push_back(
+  //    Args.MakeArgString(std::string("-G") + SmallDataThreshold));
+  //}
+
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  const std::string MarchSuffix = "/" + MarchString;
+  const std::string G0Suffix = "/G0";
+  const std::string MarchG0Suffix = MarchSuffix + G0Suffix;
+  const std::string RootDir = toolchains::Nios2_TC::GetGnuDir(D.InstalledDir)
+                              + "/";
+  const std::string StartFilesDir = RootDir
+                                    + "nios2-elf/lib"
+                                    + (buildingLib
+                                       ? MarchG0Suffix : MarchSuffix);
+
+  //----------------------------------------------------------------------------
+  // moslib
+  //----------------------------------------------------------------------------
+  std::vector<std::string> oslibs;
+  bool hasStandalone= false;
+
+  for (arg_iterator it = Args.filtered_begin(options::OPT_moslib_EQ),
+         ie = Args.filtered_end(); it != ie; ++it) {
+    (*it)->claim();
+    oslibs.push_back((*it)->getValue());
+    hasStandalone = hasStandalone || (oslibs.back() == "standalone");
+  }
+  if (oslibs.empty()) {
+    oslibs.push_back("standalone");
+    hasStandalone = true;
+  }
+
+  //----------------------------------------------------------------------------
+  // Start Files
+  //----------------------------------------------------------------------------
+  if (incStdLib && incStartFiles) {
+
+    if (!buildingLib) {
+      if (hasStandalone) {
+        CmdArgs.push_back(
+          Args.MakeArgString(StartFilesDir + "/crt0_standalone.o"));
+      }
+      CmdArgs.push_back(Args.MakeArgString(StartFilesDir + "/crt0.o"));
+    }
+    std::string initObj = useShared ? "/initS.o" : "/init.o";
+    CmdArgs.push_back(Args.MakeArgString(StartFilesDir + initObj));
+  }
+
+  //----------------------------------------------------------------------------
+  // Library Search Paths
+  //----------------------------------------------------------------------------
+  const ToolChain::path_list &LibPaths = ToolChain.getFilePaths();
+  for (ToolChain::path_list::const_iterator
+         i = LibPaths.begin(),
+         e = LibPaths.end();
+       i != e;
+       ++i)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
+
+  //----------------------------------------------------------------------------
+  //
+  //----------------------------------------------------------------------------
+  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
+  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs, options::OPT_s);
+  Args.AddAllArgs(CmdArgs, options::OPT_t);
+  Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
+
+  AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
+
+  //----------------------------------------------------------------------------
+  // Libraries
+  //----------------------------------------------------------------------------
+  if (incStdLib && incDefLibs) {
+    if (D.CCCIsCXX()) {
+      ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lm");
+    }
+
+    CmdArgs.push_back("--start-group");
+
+    if (!buildingLib) {
+      for(std::vector<std::string>::iterator i = oslibs.begin(),
+            e = oslibs.end(); i != e; ++i)
+        CmdArgs.push_back(Args.MakeArgString("-l" + *i));
+      CmdArgs.push_back("-lc");
+    }
+    CmdArgs.push_back("-lgcc");
+
+    CmdArgs.push_back("--end-group");
+  }
+
+  //----------------------------------------------------------------------------
+  // End files
+  //----------------------------------------------------------------------------
+  if (incStdLib && incStartFiles) {
+    std::string finiObj = useShared ? "/finiS.o" : "/fini.o";
+    CmdArgs.push_back(Args.MakeArgString(StartFilesDir + finiObj));
+  }
+
+  std::string Linker = ToolChain.GetProgramPath("nios-elf-ld");
+  C.addCommand(new Command(JA, *this, Args.MakeArgString(Linker), CmdArgs));
+}
+// Nios2 tools end.

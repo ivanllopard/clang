@@ -2898,3 +2898,185 @@ void XCore::AddCXXStdlibLibArgs(const ArgList &Args,
                                 ArgStringList &CmdArgs) const {
   // We don't output any lib args. This is handled by xcc.
 }
+
+/// ***************
+/// Nios2 Toolchain
+/// ***************
+
+std::string Nios2_TC::GetGnuDir(const std::string &InstalledDir) {
+
+  // Locate the rest of the toolchain ...
+  if (strlen(GCC_INSTALL_PREFIX))
+    return std::string(GCC_INSTALL_PREFIX);
+
+  std::string InstallRelDir = InstalledDir + "/../../gnu";
+  if (llvm::sys::fs::exists(InstallRelDir))
+    return InstallRelDir;
+
+  std::string PrefixRelDir = std::string(LLVM_PREFIX) + "/../gnu";
+  if (llvm::sys::fs::exists(PrefixRelDir))
+    return PrefixRelDir;
+
+  return InstallRelDir;
+}
+
+static void GetNios2LibraryPaths(
+  const ArgList &Args,
+  const std::string Ver,
+  const std::string MarchString,
+  const std::string &InstalledDir,
+  ToolChain::path_list *LibPaths)
+{
+  bool buildingLib = Args.hasArg(options::OPT_shared);
+
+  //----------------------------------------------------------------------------
+  // -L Args
+  //----------------------------------------------------------------------------
+  for (arg_iterator
+         it = Args.filtered_begin(options::OPT_L),
+         ie = Args.filtered_end();
+       it != ie;
+       ++it) {
+    for (unsigned i = 0, e = (*it)->getNumValues(); i != e; ++i)
+      LibPaths->push_back((*it)->getValue(i));
+  }
+
+  //----------------------------------------------------------------------------
+  // Other standard paths
+  //----------------------------------------------------------------------------
+  const std::string MarchSuffix = "/" + MarchString;
+  const std::string G0Suffix = "/G0";
+  const std::string MarchG0Suffix = MarchSuffix + G0Suffix;
+  const std::string RootDir = Nios2_TC::GetGnuDir(InstalledDir) + "/";
+
+  // lib/gcc/nios2-elf/...
+  std::string LibGCCNios2Dir = RootDir + "lib/gcc/nios2-elf/";
+  if (buildingLib) {
+    LibPaths->push_back(LibGCCNios2Dir + Ver + MarchG0Suffix);
+    LibPaths->push_back(LibGCCNios2Dir + Ver + G0Suffix);
+  }
+  LibPaths->push_back(LibGCCNios2Dir + Ver + MarchSuffix);
+  LibPaths->push_back(LibGCCNios2Dir + Ver);
+
+  // lib/gcc/...
+  LibPaths->push_back(RootDir + "lib/gcc");
+
+  // nios2-elf/lib/...
+  std::string Nios2LibDir = RootDir + "nios2-elf/lib";
+  if (buildingLib) {
+    LibPaths->push_back(Nios2LibDir + MarchG0Suffix);
+    LibPaths->push_back(Nios2LibDir + G0Suffix);
+  }
+  LibPaths->push_back(Nios2LibDir + MarchSuffix);
+  LibPaths->push_back(Nios2LibDir);
+}
+
+Nios2_TC::Nios2_TC(const Driver &D, const llvm::Triple &Triple,
+                       const ArgList &Args)
+  : Linux(D, Triple, Args) {
+  const std::string InstalledDir(getDriver().getInstalledDir());
+  const std::string GnuDir = Nios2_TC::GetGnuDir(InstalledDir);
+
+  // Note: Generic_GCC::Generic_GCC adds InstalledDir and getDriver().Dir to
+  // program paths
+  const std::string BinDir(GnuDir + "/bin");
+  if (llvm::sys::fs::exists(BinDir))
+    getProgramPaths().push_back(BinDir);
+
+  // Determine version of GCC libraries and headers to use.
+  const std::string Nios2Dir(GnuDir + "/lib/gcc/nios2-elf");
+  llvm::error_code ec;
+  GCCVersion MaxVersion= GCCVersion::Parse("0.0.0");
+  for (llvm::sys::fs::directory_iterator di(Nios2Dir, ec), de;
+       !ec && di != de; di = di.increment(ec)) {
+    GCCVersion cv = GCCVersion::Parse(llvm::sys::path::filename(di->path()));
+    if (MaxVersion < cv)
+      MaxVersion = cv;
+  }
+  GCCLibAndIncVersion = MaxVersion;
+
+  ToolChain::path_list *LibPaths= &getFilePaths();
+
+  GetNios2LibraryPaths(
+    Args,
+    GetGCCLibAndIncVersion(),
+    GetTargetCPU(Args),
+    InstalledDir,
+    LibPaths);
+}
+
+Nios2_TC::~Nios2_TC() {
+}
+
+// Use gcc to assemble and link
+Tool *Nios2_TC::buildAssembler() const {
+  return new tools::nios2::Assemble(*this);
+}
+
+Tool *Nios2_TC::buildLinker() const {
+  return new tools::nios2::Link(*this);
+}
+
+void Nios2_TC::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
+                                           ArgStringList &CC1Args) const {
+  const Driver &D = getDriver();
+
+  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
+      DriverArgs.hasArg(options::OPT_nostdlibinc))
+    return;
+
+  std::string Ver(GetGCCLibAndIncVersion());
+  std::string GnuDir = Nios2_TC::GetGnuDir(D.InstalledDir);
+  std::string Nios2Dir(GnuDir + "/lib/gcc/nios-elf/" + Ver);
+  addExternCSystemInclude(DriverArgs, CC1Args, Nios2Dir + "/include");
+  addExternCSystemInclude(DriverArgs, CC1Args, Nios2Dir + "/include-fixed");
+  addExternCSystemInclude(DriverArgs, CC1Args, GnuDir + "/nios-elf/include");
+}
+
+void Nios2_TC::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
+                                              ArgStringList &CC1Args) const {
+
+  if (DriverArgs.hasArg(options::OPT_nostdlibinc) ||
+      DriverArgs.hasArg(options::OPT_nostdincxx))
+    return;
+
+  const Driver &D = getDriver();
+  std::string Ver(GetGCCLibAndIncVersion());
+  SmallString<128> IncludeDir(Nios2_TC::GetGnuDir(D.InstalledDir));
+
+  llvm::sys::path::append(IncludeDir, "nios2-elf/include/c++/");
+  llvm::sys::path::append(IncludeDir, Ver);
+  addSystemInclude(DriverArgs, CC1Args, IncludeDir.str());
+}
+
+ToolChain::CXXStdlibType
+Nios2_TC::GetCXXStdlibType(const ArgList &Args) const {
+  Arg *A = Args.getLastArg(options::OPT_stdlib_EQ);
+  if (!A)
+    return ToolChain::CST_Libstdcxx;
+
+  StringRef Value = A->getValue();
+  if (Value != "libstdc++") {
+    getDriver().Diag(diag::err_drv_invalid_stdlib_name)
+      << A->getAsString(Args);
+  }
+
+  return ToolChain::CST_Libstdcxx;
+}
+
+StringRef Nios2_TC::GetTargetCPU(const ArgList &Args)
+{
+  Arg *A = Args.getLastArg(options::OPT_march_EQ, options::OPT_mcpu_EQ);
+  // Select the default CPU (v4) if none was given.
+  if (!A)
+    return "nios2";
+
+  StringRef WhichNios2 = A->getValue();
+  if (WhichNios2.startswith("nios2")) {
+    // FIXME Add other targets: small, std, full
+    return WhichNios2;
+  }
+
+  return "nios2";
+}
+// End Nios2
