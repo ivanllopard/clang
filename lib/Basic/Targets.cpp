@@ -5294,6 +5294,7 @@ public:
 
 namespace {
 class Nios2TargetInfoBase : public TargetInfo {
+  static const Builtin::Info BuiltinInfo[];
   std::string CPU;
 
 protected:
@@ -5335,6 +5336,8 @@ public:
 
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
                                  unsigned &NumRecords) const {
+    Records = BuiltinInfo;
+    NumRecords = clang::Nios2::LastTSBuiltin - Builtin::FirstTSBuiltin;
   }
   virtual bool hasFeature(StringRef Feature) const {
     return Feature == "nios2";
@@ -5483,6 +5486,13 @@ public:
     Aliases = GCCRegAliases;
     NumAliases = llvm::array_lengthof(GCCRegAliases);
   }
+};
+
+const Builtin::Info Nios2TargetInfoBase::BuiltinInfo[] = {
+#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
+                                              ALL_LANGUAGES },
+#include "clang/Basic/BuiltinsNios2.def"
 };
 }
 
