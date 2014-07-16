@@ -5389,7 +5389,7 @@ protected:
 
 public:
   Nios2StdTargetInfo(const llvm::Triple& triple) :
-    Nios2TargetInfoBase(triple, "o32", "nios2"),
+    Nios2TargetInfoBase(triple, "", "nios2"),
     HasHWMul(false),
     HasHWDiv(false)
   {
