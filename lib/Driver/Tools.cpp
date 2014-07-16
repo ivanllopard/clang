@@ -7153,7 +7153,7 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
   bool incStdLib = !Args.hasArg(options::OPT_nostdlib);
   bool incStartFiles = !Args.hasArg(options::OPT_nostartfiles);
   bool incDefLibs = !Args.hasArg(options::OPT_nodefaultlibs);
-  bool useShared = buildingLib && !hasStaticArg;
+  //bool useShared = buildingLib && !hasStaticArg;
 
   //----------------------------------------------------------------------------
   // Silence warnings for various options
@@ -7173,13 +7173,13 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
        i != e; ++i)
     CmdArgs.push_back(i->c_str());
 
-  std::string MarchString = toolchains::Nios2_TC::GetTargetCPU(Args);
-  CmdArgs.push_back(Args.MakeArgString("-m" + MarchString));
+  //std::string MarchString = toolchains::Nios2_TC::GetTargetCPU(Args);
+  //CmdArgs.push_back(Args.MakeArgString("-m" + MarchString));
 
   if (buildingLib) {
     CmdArgs.push_back("-shared");
     CmdArgs.push_back("-call_shared"); // should be the default, but doing as
-                                       // nios-elf-gcc does
+                                       // nios2-elf-gcc does
   }
 
   if (hasStaticArg)
@@ -7188,43 +7188,27 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (buildPIE && !buildingLib)
     CmdArgs.push_back("-pie");
 
-  //std::string SmallDataThreshold = GetHexagonSmallDataThresholdValue(Args);
-  //if (!SmallDataThreshold.empty()) {
-  //  CmdArgs.push_back(
-  //    Args.MakeArgString(std::string("-G") + SmallDataThreshold));
-  //}
-
   //----------------------------------------------------------------------------
   //
   //----------------------------------------------------------------------------
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  const std::string MarchSuffix = "/" + MarchString;
-  const std::string G0Suffix = "/G0";
-  const std::string MarchG0Suffix = MarchSuffix + G0Suffix;
+  const std::string MarchSuffix = "/nios2-elf";
   const std::string RootDir = toolchains::Nios2_TC::GetGnuDir(D.InstalledDir)
                               + "/";
   const std::string StartFilesDir = RootDir
-                                    + "nios2-elf/lib"
-                                    + (buildingLib
-                                       ? MarchG0Suffix : MarchSuffix);
+                                    + MarchSuffix + "/lib";
 
   //----------------------------------------------------------------------------
   // moslib
   //----------------------------------------------------------------------------
   std::vector<std::string> oslibs;
-  bool hasStandalone= false;
 
   for (arg_iterator it = Args.filtered_begin(options::OPT_moslib_EQ),
          ie = Args.filtered_end(); it != ie; ++it) {
     (*it)->claim();
     oslibs.push_back((*it)->getValue());
-    hasStandalone = hasStandalone || (oslibs.back() == "standalone");
-  }
-  if (oslibs.empty()) {
-    oslibs.push_back("standalone");
-    hasStandalone = true;
   }
 
   //----------------------------------------------------------------------------
@@ -7233,14 +7217,10 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (incStdLib && incStartFiles) {
 
     if (!buildingLib) {
-      if (hasStandalone) {
-        CmdArgs.push_back(
-          Args.MakeArgString(StartFilesDir + "/crt0_standalone.o"));
-      }
       CmdArgs.push_back(Args.MakeArgString(StartFilesDir + "/crt0.o"));
     }
-    std::string initObj = useShared ? "/initS.o" : "/init.o";
-    CmdArgs.push_back(Args.MakeArgString(StartFilesDir + initObj));
+    //std::string initObj = useShared ? "/initS.o" : "/init.o";
+    //CmdArgs.push_back(Args.MakeArgString(StartFilesDir + initObj));
   }
 
   //----------------------------------------------------------------------------
@@ -7281,8 +7261,10 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
             e = oslibs.end(); i != e; ++i)
         CmdArgs.push_back(Args.MakeArgString("-l" + *i));
       CmdArgs.push_back("-lc");
+      CmdArgs.push_back("-lstack");
     }
     CmdArgs.push_back("-lgcc");
+    CmdArgs.push_back("-lnosys");
 
     CmdArgs.push_back("--end-group");
   }
@@ -7290,12 +7272,8 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
   //----------------------------------------------------------------------------
   // End files
   //----------------------------------------------------------------------------
-  if (incStdLib && incStartFiles) {
-    std::string finiObj = useShared ? "/finiS.o" : "/fini.o";
-    CmdArgs.push_back(Args.MakeArgString(StartFilesDir + finiObj));
-  }
 
-  std::string Linker = ToolChain.GetProgramPath("nios-elf-ld");
+  std::string Linker = ToolChain.GetProgramPath("nios2-elf-ld");
   C.addCommand(new Command(JA, *this, Args.MakeArgString(Linker), CmdArgs));
 }
 // Nios2 tools end.

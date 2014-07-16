@@ -664,7 +664,7 @@ namespace nios2 {
   class LLVM_LIBRARY_VISIBILITY Assemble : public Tool {
   public:
     Assemble(const ToolChain &TC) : Tool("nios2::Assemble",
-      "nios-elf-as", TC) {}
+      "nios2-elf-as", TC) {}
 
     virtual bool hasIntegratedCPP() const { return false; }
 
