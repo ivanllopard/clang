@@ -5315,23 +5315,18 @@ public:
     CPU = Name;
     return true;
   }
+
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const {
-    Features[ABI] = true;
-    Features[CPU] = true;
   }
 
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const {
     DefineStd(Builder, "nios2", Opts);
     Builder.defineMacro("_nios2");
-    //Builder.defineMacro("__REGISTER_PREFIX__", "");
-
-    //Builder.defineMacro("_MIPS_SZPTR", Twine(getPointerWidth(0)));
-    //Builder.defineMacro("_MIPS_SZINT", Twine(getIntWidth()));
-    //Builder.defineMacro("_MIPS_SZLONG", Twine(getLongWidth()));
 
     Builder.defineMacro("_NIOS2_ARCH", "\"" + CPU + "\"");
     Builder.defineMacro("_NIOS2_ARCH_" + StringRef(CPU).upper());
+    Builder.defineMacro("__IEEE_LITTLE_ENDIAN");
   }
 
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
