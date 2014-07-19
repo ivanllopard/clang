@@ -35,5 +35,5 @@ at H-i686-pc-linux-gnu/nios2-elf/include.
 The compiler is still at its "hack" state, I do not have a board to fully test
 it. Please feel free to clone the repo and submit patches!
 
-[altera-nios2-eds] https://www.altera.com/download/software/nios-ii
-[nios2-elf-toolchain] ftp://ftp.altera.com/outgoing/download/support/ip/processors/nios2/gnu/nios2_gnu_gcc4_13.0.gz
+[altera-nios2-eds]: https://www.altera.com/download/software/nios-ii
+[nios2-elf-toolchain]: ftp://ftp.altera.com/outgoing/download/support/ip/processors/nios2/gnu/nios2_gnu_gcc4_13.0.gz
