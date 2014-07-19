@@ -1,0 +1,12 @@
+# Site settings
+title: Nios II clang port
+#email: your-email@domain.com
+description: "LLVM/Clang toolchain for the soft-core processor Nios II "
+baseurl: "/nios2-clang"
+url: "https://github.com/ivanllopard"
+#twitter_username: ivanllopard
+github_username:  ivanllopard
+
+# Build settings
+markdown: kramdown
+permalink: pretty
