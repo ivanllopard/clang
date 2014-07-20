@@ -24,16 +24,16 @@ $ $LLVM_SOURCE/configure --enable-optimized --target=nios2 --enable-targets=nios
 $ make -j2 && sudo make install
 {% endhighlight %}
 
-You will get the nios2-clang compiler installed at the default prefix path.
-Currently, the front-end uses nios2-elf-as and nios2-elf-ld from the altera
+You will get the `nios2-clang` compiler installed at the default prefix path.
+Currently, the front-end uses `nios2-elf-as` and `nios2-elf-ld` from the altera
 toolchain.
 You can either compile the entire toolchain from its [sources][nios2-elf-toolchain] or
 download a compiled version which comes with the [Nios II Embedded Design Suite Legacy Tools][altera-nios2-eds]
 Similar to nios2-elf-gcc, nios2-clang depends on nios2 system includes installed
 at H-i686-pc-linux-gnu/nios2-elf/include.
 
-The compiler is still at its "hack" state, I do not have a board to fully test
-it. Please feel free to clone the repo and submit patches!
+The compiler is still at its "hack" state, it has not been tested on a real board yet
+(coming soon!). Please feel free to clone the repo and submit patches!
 
 [altera-nios2-eds]: https://www.altera.com/download/software/nios-ii
 [nios2-elf-toolchain]: ftp://ftp.altera.com/outgoing/download/support/ip/processors/nios2/gnu/nios2_gnu_gcc4_13.0.gz
