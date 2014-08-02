@@ -15,22 +15,22 @@
 // The format of this database matches clang/Basic/Builtins.def.
 
 // Read/Write control registers
-BUILTIN(__builtin_nios2_rdctl, "iIi", "")
-BUILTIN(__builtin_nios2_wrctl, "vIii", "")
+BUILTIN(__builtin_rdctl, "iIi", "")
+BUILTIN(__builtin_wrctl, "vIii", "")
 
 // Add/subtract with optional saturation
-BUILTIN(__builtin_nios2_ldbio, "ci", "")
-BUILTIN(__builtin_nios2_ldbuio, "ci", "")
-BUILTIN(__builtin_nios2_ldhio, "si", "")
-BUILTIN(__builtin_nios2_ldhuio, "si", "")
-BUILTIN(__builtin_nios2_ldwio, "ii", "")
-BUILTIN(__builtin_nios2_ldwuio, "ii", "")
+BUILTIN(__builtin_ldbio, "ci", "")
+BUILTIN(__builtin_ldbuio, "ci", "")
+BUILTIN(__builtin_ldhio, "si", "")
+BUILTIN(__builtin_ldhuio, "si", "")
+BUILTIN(__builtin_ldwio, "ii", "")
+BUILTIN(__builtin_ldwuio, "ii", "")
 
-BUILTIN(__builtin_nios2_stbio, "vci", "")
-BUILTIN(__builtin_nios2_sthio, "vsi", "")
-BUILTIN(__builtin_nios2_stwio, "vii", "")
+BUILTIN(__builtin_stbio, "vci", "")
+BUILTIN(__builtin_sthio, "vsi", "")
+BUILTIN(__builtin_stwio, "vii", "")
 
 // Barrier
-BUILTIN(__builtin_nios2_sync, "vi", "")
+BUILTIN(__builtin_sync, "vi", "")
 
 #undef BUILTIN
