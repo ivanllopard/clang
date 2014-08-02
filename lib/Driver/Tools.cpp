@@ -7264,7 +7264,6 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-lstack");
     }
     CmdArgs.push_back("-lgcc");
-    CmdArgs.push_back("-lnosys");
 
     CmdArgs.push_back("--end-group");
   }
