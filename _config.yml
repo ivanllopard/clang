@@ -2,7 +2,7 @@
 title: Nios II on clang
 #email: your-email@domain.com
 description: "LLVM/Clang toolchain for the soft-core processor Nios II "
-baseurl: ""
+baseurl: "/nios2-clang"
 url: "https://github.com/ivanllopard"
 #twitter_username: ivanllopard
 github_username:  ivanllopard
