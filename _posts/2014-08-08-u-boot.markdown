@@ -1,0 +1,47 @@
+---
+layout: post
+title:  "Compiling u-boot with nios2-clang"
+date:   2014-08-08
+categories: clang
+---
+
+I tried the u-boot project for bug finding in the nios2 backend.
+After fixing a bunch of bugs and implementing some missing features, nios2-clang
+can finally build u-boot !
+
+First of all, compile and install nios2-clang as explained in the last post,
+[Nios2 II port of LLVM/clang: Status]({% post_url 2014-07-19-clang-hack %}).
+
+As mentioned, you will need the altera gcc tool-chain. The software tool Quartus II web
+edition comes with Nios II Embedded Design Suite, you can get it at
+[altera-quartus-web].
+
+Supposing that you already have Quartus II + Nios II EDS installed at /opt/altera/14.0,
+enter the nios command shell
+
+{% highlight bash %}
+$ /opt/altera/14.0/nios2eds/nios2_command_shell.sh
+{% endhighlight %}
+
+Set the following environment variable with the path to Nios II system headers
+and libraries.
+
+{% highlight bash %}
+$ export NIOS2_SYSDIR=/opt/altera/14.0/nios2eds/bin/gnu/H-x86_64-pc-linux-gnu/lib/gcc/nios2-elf/4.7.3
+{% endhighlight %}
+
+Get u-boot and create a fresh build directory
+{% highlight bash %}
+$ git clone https://github.com/ivanllopard/nios2-u-boot.git 
+$ cd nios2-u-boot
+$ mkdir build
+{% endhighlight %}
+
+Finally, choose a Nios II compatible board and build u-boot
+
+{% highlight bash %}
+$ make O=build synapse_config
+$ make O=build/ CC=nios2-clang gccincdir="$NIOS2_SYSDIR/include -L$NIOS2_SYSDIR"
+{% endhighlight %}
+
+[altera-quartus-web]: http://dl.altera.com/?edition=web
