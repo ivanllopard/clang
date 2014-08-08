@@ -1,11 +1,11 @@
 ---
 layout: post
-title:  "Nios II clang port status"
-date:   2014-07-19 23:06:38
-categories: compiler
+title:  "Nios2 II port of LLVM/clang: Status"
+date:   2014-07-19
+categories: clang
 ---
 
-Nios II clang port is finally "working". It depends on the altera gcc chain tools to generate
+Nios II clang port is finally "working". It depends on the altera gcc tool chain to generate
 object code.
 
 * Clone llvm core and clang
@@ -32,8 +32,8 @@ download a compiled version which comes with the [Nios II Embedded Design Suite 
 Similar to nios2-elf-gcc, nios2-clang depends on nios2 system includes installed
 at H-i686-pc-linux-gnu/nios2-elf/include.
 
-The compiler is still at its "hack" state, it has not been tested on a real board yet
-(coming soon!). Please feel free to clone the repo and submit patches!
+The compiler is still at its "hack" state, it has not been tested on a real
+board yet. Please feel free to test it and submit patches !
 
 [altera-nios2-eds]: https://www.altera.com/download/software/nios-ii
 [nios2-elf-toolchain]: ftp://ftp.altera.com/outgoing/download/support/ip/processors/nios2/gnu/nios2_gnu_gcc4_13.0.gz
