@@ -119,9 +119,9 @@ def add_matcher(result_type, name, args, comment, is_dyncast=False):
   # arguments.
   elif ('Matcher<' not in args or
         name in ['allOf', 'anyOf', 'anything', 'unless']):
-    narrowing_matchers[result_type + name] = matcher_html
+    narrowing_matchers[result_type + name + esc(args)] = matcher_html
   else:
-    traversal_matchers[result_type + name] = matcher_html
+    traversal_matchers[result_type + name + esc(args)] = matcher_html
 
 def act_on_decl(declaration, comment, allowed_types):
   """Parse the matcher out of the given declaration and comment.
@@ -163,10 +163,10 @@ def act_on_decl(declaration, comment, allowed_types):
     m = re.match(""".*AST_TYPE(LOC)?_TRAVERSE_MATCHER\(
                        \s*([^\s,]+\s*),
                        \s*(?:[^\s,]+\s*),
-                       \s*AST_POLYMORPHIC_SUPPORTED_TYPES_([^(]*)\(([^)]*)\)
+                       \s*AST_POLYMORPHIC_SUPPORTED_TYPES\(([^)]*)\)
                      \)\s*;\s*$""", declaration, flags=re.X)
     if m:
-      loc, name, n_results, results = m.groups()[0:4]
+      loc, name, results = m.groups()[0:3]
       result_types = [r.strip() for r in results.split(',')]
 
       comment_result_types = extract_result_types(comment)
@@ -182,7 +182,7 @@ def act_on_decl(declaration, comment, allowed_types):
 
     m = re.match(r"""^\s*AST_POLYMORPHIC_MATCHER(_P)?(.?)(?:_OVERLOAD)?\(
                           \s*([^\s,]+)\s*,
-                          \s*AST_POLYMORPHIC_SUPPORTED_TYPES_([^(]*)\(([^)]*)\)
+                          \s*AST_POLYMORPHIC_SUPPORTED_TYPES\(([^)]*)\)
                        (?:,\s*([^\s,]+)\s*
                           ,\s*([^\s,]+)\s*)?
                        (?:,\s*([^\s,]+)\s*
@@ -191,8 +191,8 @@ def act_on_decl(declaration, comment, allowed_types):
                       \)\s*{\s*$""", declaration, flags=re.X)
 
     if m:
-      p, n, name, n_results, results = m.groups()[0:5]
-      args = m.groups()[5:]
+      p, n, name, results = m.groups()[0:4]
+      args = m.groups()[4:]
       result_types = [r.strip() for r in results.split(',')]
       if allowed_types and allowed_types != result_types:
         raise Exception('Inconsistent documentation for: %s' % name)
@@ -202,6 +202,25 @@ def act_on_decl(declaration, comment, allowed_types):
                        for i in range(0, len(args), 2) if args[i])
       for result_type in result_types:
         add_matcher(result_type, name, args, comment)
+      return
+
+    m = re.match(r"""^\s*AST_MATCHER_FUNCTION(_P)?(.?)(?:_OVERLOAD)?\(
+                       (?:\s*([^\s,]+)\s*,)?
+                          \s*([^\s,]+)\s*
+                       (?:,\s*([^\s,]+)\s*
+                          ,\s*([^\s,]+)\s*)?
+                       (?:,\s*([^\s,]+)\s*
+                          ,\s*([^\s,]+)\s*)?
+                       (?:,\s*\d+\s*)?
+                      \)\s*{\s*$""", declaration, flags=re.X)
+    if m:
+      p, n, result, name = m.groups()[0:4]
+      args = m.groups()[4:]
+      if n not in ['', '2']:
+        raise Exception('Cannot parse "%s"' % declaration)
+      args = ', '.join('%s %s' % (args[i], args[i+1])
+                       for i in range(0, len(args), 2) if args[i])
+      add_matcher(result, name, args, comment)
       return
 
     m = re.match(r"""^\s*AST_MATCHER(_P)?(.?)(?:_OVERLOAD)?\(
@@ -242,12 +261,17 @@ def act_on_decl(declaration, comment, allowed_types):
 
     # Parse Variadic operator matchers.
     m = re.match(
-        r"""^.*VariadicOperatorMatcherFunc\s*([a-zA-Z]*)\s*=\s*{.*};$""",
+        r"""^.*VariadicOperatorMatcherFunc\s*<\s*([^,]+),\s*([^\s>]+)\s*>\s*
+              ([a-zA-Z]*)\s*=\s*{.*};$""",
         declaration, flags=re.X)
     if m:
-      name = m.groups()[0]
-      add_matcher('*', name, 'Matcher<*>, ..., Matcher<*>', comment)
-      return
+      min_args, max_args, name = m.groups()[:3]
+      if max_args == '1':
+        add_matcher('*', name, 'Matcher<*>', comment)
+        return
+      elif max_args == 'UINT_MAX':
+        add_matcher('*', name, 'Matcher<*>, ..., Matcher<*>', comment)
+        return
 
 
     # Parse free standing matcher functions, like:
@@ -340,6 +364,6 @@ reference = re.sub(r'<!-- START_NARROWING_MATCHERS.*END_NARROWING_MATCHERS -->',
 reference = re.sub(r'<!-- START_TRAVERSAL_MATCHERS.*END_TRAVERSAL_MATCHERS -->',
                    '%s', reference, flags=re.S) % traversal_matcher_table
 
-with open('../LibASTMatchersReference.html', 'w') as output:
+with open('../LibASTMatchersReference.html', 'wb') as output:
   output.write(reference)
 

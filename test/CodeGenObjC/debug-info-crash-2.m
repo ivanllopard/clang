@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin11 -g -S %s -o -
-// REQUIRES: x86-64-registered-target
+// RUN: %clang_cc1 -triple x86_64-apple-darwin11 -debug-info-kind=limited -S %s -o -
+// REQUIRES: x86-registered-target
 
 @class Bar;
 @interface Foo

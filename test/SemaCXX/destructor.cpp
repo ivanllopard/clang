@@ -1,4 +1,5 @@
-// RUN: %clang_cc1 -std=c++11 -fsyntax-only -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -verify %s
+// RUN: %clang_cc1 -std=c++11 -triple %itanium_abi_triple -fsyntax-only -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -verify %s
+// RUN: %clang_cc1 -std=c++11 -triple %ms_abi_triple -DMSABI -fsyntax-only -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -verify %s
 class A {
 public:
   ~A();
@@ -83,6 +84,12 @@ namespace PR6421 {
 }
 
 namespace PR6709 {
+#ifdef MSABI
+  // This bug, "Clang instantiates destructor for function argument" is intended
+  // behaviour in the Microsoft ABI because the callee needs to destruct the arguments.
+  // expected-error@+3 {{indirection requires pointer operand ('int' invalid)}}
+  // expected-note@+3 {{in instantiation of member function 'PR6709::X<int>::~X' requested here}}
+#endif
   template<class T> class X { T v; ~X() { ++*v; } };
   void a(X<int> x) {}
 }
@@ -100,10 +107,16 @@ namespace test6 {
       T::deleteIt(p); // expected-error {{type 'int' cannot be used prior to '::'}}
     }
 
+#ifdef MSABI
+    // expected-note@+2 {{in instantiation of member function 'test6::A<int>::operator delete' requested here}}
+#endif
     virtual ~A() {}
   };
 
-  class B : A<int> { B(); }; // expected-note {{in instantiation of member function 'test6::A<int>::operator delete' requested here}}
+#ifndef MSABI
+    // expected-note@+2 {{in instantiation of member function 'test6::A<int>::operator delete' requested here}}
+#endif
+  class B : A<int> { B(); };
   B::B() {}
 }
 
@@ -160,6 +173,12 @@ protected:
   ~S7();
 };
 
+struct S8 {} s8;
+
+UnknownType S8::~S8() { // expected-error {{unknown type name 'UnknownType'}}
+  s8.~S8();
+}
+
 template<class T> class TS : public B {
   virtual void m();
 };
@@ -182,7 +201,7 @@ struct B { // expected-warning {{has virtual functions but non-virtual destructo
 
 struct D: B {}; // expected-warning {{has virtual functions but non-virtual destructor}}
 
-struct F final: B {}; // expected-warning {{has virtual functions but non-virtual destructor}}
+struct F final : B {};
 
 struct VB {
   virtual void foo();
@@ -198,8 +217,8 @@ class simple_ptr {
 public:
   simple_ptr(T* t): _ptr(t) {}
   ~simple_ptr() { delete _ptr; } // \
-    // expected-warning {{delete called on 'dnvd::B' that has virtual functions but non-virtual destructor}} \
-    // expected-warning {{delete called on 'dnvd::D' that has virtual functions but non-virtual destructor}}
+    // expected-warning {{delete called on non-final 'dnvd::B' that has virtual functions but non-virtual destructor}} \
+    // expected-warning {{delete called on non-final 'dnvd::D' that has virtual functions but non-virtual destructor}}
   T& operator*() const { return *_ptr; }
 private:
   T* _ptr;
@@ -209,7 +228,7 @@ template <typename T>
 class simple_ptr2 {
 public:
   simple_ptr2(T* t): _ptr(t) {}
-  ~simple_ptr2() { delete _ptr; } // expected-warning {{delete called on 'dnvd::B' that has virtual functions but non-virtual destructor}}
+  ~simple_ptr2() { delete _ptr; } // expected-warning {{delete called on non-final 'dnvd::B' that has virtual functions but non-virtual destructor}}
   T& operator*() const { return *_ptr; }
 private:
   T* _ptr;
@@ -295,15 +314,15 @@ void nowarn0() {
 void warn0() {
   {
     B* b = new B();
-    delete b; // expected-warning {{delete called on 'dnvd::B' that has virtual functions but non-virtual destructor}}
+    delete b; // expected-warning {{delete called on non-final 'dnvd::B' that has virtual functions but non-virtual destructor}}
   }
   {
     B* b = new D();
-    delete b; // expected-warning {{delete called on 'dnvd::B' that has virtual functions but non-virtual destructor}}
+    delete b; // expected-warning {{delete called on non-final 'dnvd::B' that has virtual functions but non-virtual destructor}}
   }
   {
     D* d = new D();
-    delete d; // expected-warning {{delete called on 'dnvd::D' that has virtual functions but non-virtual destructor}}
+    delete d; // expected-warning {{delete called on non-final 'dnvd::D' that has virtual functions but non-virtual destructor}}
   }
 }
 
@@ -366,4 +385,21 @@ namespace PR7900 {
 
 namespace PR16892 {
   auto p = &A::~A; // expected-error{{taking the address of a destructor}}
+}
+
+namespace PR20238 {
+struct S {
+  volatile ~S() { } // expected-error{{destructor cannot have a return type}}
+};
+}
+
+namespace PR22668 {
+struct S {
+};
+void f(S s) {
+  (s.~S)();
+}
+void g(S s) {
+  (s.~S); // expected-error{{reference to destructor must be called}}
+}
 }

@@ -1,8 +1,8 @@
-// RUN: %clang -flimit-debug-info -emit-llvm -g -S %s -o - | FileCheck %s
+// RUN: %clang_cc1 -emit-llvm -debug-info-kind=limited -triple %itanium_abi_triple %s -o - | FileCheck %s
 
 // Check that this pointer type is TC<int>
-// CHECK: ![[LINE:[0-9]+]] = {{.*}}"TC<int>", {{.*}} metadata !"_ZTS2TCIiE"} ; [ DW_TAG_class_type ]
-// CHECK: metadata !"_ZTS2TCIiE"} ; [ DW_TAG_pointer_type ]{{.*}}[from _ZTS2TCIiE]
+// CHECK: ![[LINE:[0-9]+]] = !DICompositeType(tag: DW_TAG_class_type, name: "TC<int>"{{.*}}, identifier: "_ZTS2TCIiE")
+// CHECK: !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !"_ZTS2TCIiE"
 
 template<typename T>
 class TC {

@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -fsyntax-only -Wdocumentation -fcomment-block-commands=foobar -verify %s
-// RUN: %clang_cc1 -fsyntax-only -Wdocumentation -fcomment-block-commands=foobar -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s
+// RUN: %clang_cc1 -fsyntax-only -Wdocumentation -Wdocumentation-pedantic -fcomment-block-commands=foobar -verify %s
+// RUN: %clang_cc1 -fsyntax-only -Wdocumentation -Wdocumentation-pedantic -fcomment-block-commands=foobar -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s
 
 // expected-warning@+1 {{parameter 'ZZZZZZZZZZ' not found in the function declaration}} expected-note@+1 {{did you mean 'a'?}}
 /// \param ZZZZZZZZZZ Blah blah.
@@ -67,8 +67,14 @@ int FooBar();
 /// \fooba bbb IS_DOXYGEN_END
 int gorf();
 
+// expected-warning@+1 {{unknown command tag name}}
 /// \t bbb IS_DOXYGEN_END
 int Bar();
+
+// expected-warning@+2  {{unknown command tag name 'encode'; did you mean 'endcode'?}}
+// expected-warning@+1  {{'\endcode' command does not terminate a verbatim text block}}
+/// \encode PR18051
+int PR18051();
 
 // CHECK: fix-it:"{{.*}}":{5:12-5:22}:"a"
 // CHECK: fix-it:"{{.*}}":{9:12-9:15}:"aaa"
@@ -83,3 +89,4 @@ int Bar();
 // CHECK: fix-it:"{{.*}}":{58:30-58:30}:" MY_ATTR_DEPRECATED"
 // CHECK: fix-it:"{{.*}}":{63:6-63:11}:"return"
 // CHECK: fix-it:"{{.*}}":{67:6-67:11}:"foobar"
+// CHECK: fix-it:"{{.*}}":{76:6-76:12}:"endcode"

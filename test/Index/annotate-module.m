@@ -6,6 +6,8 @@ int glob;
 // RUN: rm -rf %t.cache
 // RUN: c-index-test -test-annotate-tokens=%s:2:1:5:1 %s -fmodules-cache-path=%t.cache -fmodules -F %S/../Modules/Inputs \
 // RUN:      | FileCheck %s
+// RUN: c-index-test -test-annotate-tokens=%s:2:1:5:1 %s -fmodules-cache-path=%t.cache -fmodules -gmodules -F %S/../Modules/Inputs \
+// RUN:      | FileCheck %s
 
 // CHECK:      Punctuation: "#" [2:1 - 2:2] inclusion directive=[[INC_DIR:DependsOnModule[/\\]DependsOnModule\.h \(.*/Modules/Inputs/DependsOnModule\.framework[/\\]Headers[/\\]DependsOnModule.h\)]]
 // CHECK-NEXT: Identifier: "include" [2:2 - 2:9] inclusion directive=[[INC_DIR]]
@@ -44,6 +46,6 @@ int glob;
 // RUN: c-index-test -cursor-at=%s:3:11 %s -fmodules-cache-path=%t.cache -fmodules -F %S/../Modules/Inputs \
 // RUN:     | FileCheck %s -check-prefix=CHECK-CURSOR
 
-// CHECK-CURSOR:      3:1 ModuleImport=DependsOnModule:3:1 (Definition) Extent=[3:1 - 3:24] Spelling=DependsOnModule ([3:9 - 3:24]) ModuleName=DependsOnModule ({{.*}}DependsOnModule.pcm) Headers(2):
+// CHECK-CURSOR:      3:1 ModuleImport=DependsOnModule:3:1 (Definition) Extent=[3:1 - 3:24] Spelling=DependsOnModule ([3:9 - 3:24]) ModuleName=DependsOnModule ({{.*}}DependsOnModule-{{[^.]*}}.pcm) system=0 Headers(2):
 // CHECK-CURSOR-NEXT: {{.*}}other.h
 // CHECK-CURSOR-NEXT: {{.*}}DependsOnModule.h

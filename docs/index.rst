@@ -18,19 +18,23 @@ Using Clang as a Compiler
 
    UsersManual
    LanguageExtensions
+   AttributeReference
    CrossCompilation
+   ThreadSafetyAnalysis
    AddressSanitizer
    ThreadSanitizer
    MemorySanitizer
+   UndefinedBehaviorSanitizer
    DataFlowSanitizer
-   SanitizerSpecialCaseList
-   Modules
-   FAQ
-
-.. toctree::
-   :hidden:
-
    LeakSanitizer
+   SanitizerCoverage
+   SanitizerSpecialCaseList
+   ControlFlowIntegrity
+   SafeStack
+   Modules
+   MSVCCompatibility
+   CommandGuide/index
+   FAQ
 
 Using Clang as a Library
 ========================

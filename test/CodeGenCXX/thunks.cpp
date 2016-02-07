@@ -1,5 +1,9 @@
-// RUN: %clang_cc1 %s -triple=x86_64-pc-linux-gnu -munwind-tables -emit-llvm -o - | FileCheck %s
-// RUN: %clang_cc1 %s -triple=x86_64-pc-linux-gnu -munwind-tables -fhidden-weak-vtables -emit-llvm -o - | FileCheck -check-prefix=CHECK-HIDDEN %s
+// RUN: %clang_cc1 %s -triple=x86_64-pc-linux-gnu -munwind-tables -emit-llvm -o %t
+// RUN: %clang_cc1 %s -triple=x86_64-pc-linux-gnu -munwind-tables -emit-llvm -o %t.opt -O1 -disable-llvm-optzns
+// RUN: FileCheck %s < %t
+// RUN: FileCheck %s < %t.opt
+// RUN: FileCheck --check-prefix=CHECK-NONOPT %s < %t
+// RUN: FileCheck --check-prefix=CHECK-OPT %s < %t.opt
 
 namespace Test1 {
 
@@ -227,7 +231,7 @@ namespace Test8 {
   void C::helper(NonPOD var) {}
 
   // CHECK-LABEL: define void @_ZThn8_N5Test81C3barENS_6NonPODE(
-  // CHECK-NOT: load [[NONPODTYPE]]*
+  // CHECK-NOT: load [[NONPODTYPE]], [[NONPODTYPE]]*
   // CHECK-NOT: memcpy
   // CHECK: ret void
   void C::bar(NonPOD var) {}
@@ -250,9 +254,7 @@ namespace Test10 {
   struct B { virtual void foo(); };
   struct C : A, B { void foo() {} };
 
-  // CHECK-HIDDEN-LABEL: define linkonce_odr void @_ZN6Test101C3fooEv
-  // CHECK-HIDDEN-LABEL: define linkonce_odr hidden void @_ZThn8_N6Test101C3fooEv
-
+  // Test later.
   void test() {
     C c;
   }
@@ -297,8 +299,8 @@ namespace Test12 {
   // Varargs thunk; check that both the this and covariant adjustments
   // are generated.
   // CHECK: define {{.*}} @_ZTchn8_h8_N6Test121C1fEiz
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 8
+  // CHECK: getelementptr inbounds i8, i8* {{.*}}, i64 -8
+  // CHECK: getelementptr inbounds i8, i8* {{.*}}, i64 8
 }
 
 // PR13832
@@ -320,10 +322,10 @@ namespace Test13 {
     return *this;
   }
   // CHECK: define {{.*}} @_ZTcvn8_n32_v8_n24_N6Test131D4foo1Ev
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 -8
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 -32
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 -24
-  // CHECK: getelementptr inbounds i8* {{.*}}, i64 8
+  // CHECK: getelementptr inbounds i8, i8* {{.*}}, i64 -8
+  // CHECK: getelementptr inbounds i8, i8* {{.*}}, i64 -32
+  // CHECK: getelementptr inbounds i8, i8* {{.*}}, i64 -24
+  // CHECK: getelementptr inbounds i8, i8* {{.*}}, i64 8
   // CHECK: ret %"struct.Test13::D"*
 }
 
@@ -342,10 +344,65 @@ namespace Test14 {
   // CHECK: define void @_ZThn8_N6Test141C1fEv({{.*}}) unnamed_addr [[NUW:#[0-9]+]]
 }
 
+// Varargs non-covariant thunk test.
+// PR18098
+namespace Test15 {
+  struct A {
+    virtual ~A();
+  };
+  struct B {
+    virtual void f(int x, ...);
+  };
+  struct C : A, B {
+    virtual void c();
+    virtual void f(int x, ...);
+  };
+  void C::c() {}
+
+  // C::c
+  // CHECK: declare void @_ZN6Test151C1fEiz
+  // non-virtual thunk to C::f
+  // CHECK: declare void @_ZThn8_N6Test151C1fEiz
+}
+
+namespace Test16 {
+struct A {
+  virtual ~A();
+};
+struct B {
+  virtual void foo();
+};
+struct C : public A, public B {
+  void foo() {}
+};
+struct D : public C {
+  ~D();
+};
+D::~D() {}
+// CHECK: define linkonce_odr void @_ZThn8_N6Test161C3fooEv({{.*}}) {{.*}} comdat
+}
+
 /**** The following has to go at the end of the file ****/
 
+// checking without opt
+// CHECK-NONOPT-LABEL: define internal void @_ZThn8_N6Test4B12_GLOBAL__N_11C1fEv(
+// CHECK-NONOPT-NOT: comdat
+
 // This is from Test5:
-// CHECK-LABEL: define linkonce_odr void @_ZTv0_n24_N5Test51B1fEv
-// CHECK-LABEL: define internal void @_ZThn8_N6Test4B12_GLOBAL__N_11C1fEv(
+// CHECK-NONOPT-LABEL: define linkonce_odr void @_ZTv0_n24_N5Test51B1fEv
+
+// This is from Test10:
+// CHECK-NONOPT-LABEL: define linkonce_odr void @_ZN6Test101C3fooEv
+// CHECK-NONOPT-LABEL: define linkonce_odr void @_ZThn8_N6Test101C3fooEv
+
+// Checking with opt
+// CHECK-OPT-LABEL: define internal void @_ZThn8_N6Test4B12_GLOBAL__N_11C1fEv(%"struct.Test4B::(anonymous namespace)::C"* %this) unnamed_addr #0 align 2
+
+// This is from Test5:
+// CHECK-OPT-LABEL: define linkonce_odr void @_ZTv0_n24_N5Test51B1fEv
+
+// This is from Test10:
+// CHECK-OPT-LABEL: define linkonce_odr void @_ZN6Test101C3fooEv
+// CHECK-OPT-LABEL: define linkonce_odr void @_ZThn8_N6Test101C3fooEv
 
 // CHECK: attributes [[NUW]] = { nounwind uwtable{{.*}} }

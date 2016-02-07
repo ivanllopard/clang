@@ -1,7 +1,11 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wbind-to-temporary-copy %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wbind-to-temporary-copy -std=c++98 %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wbind-to-temporary-copy -std=c++11 %s
 
 // Make sure we don't produce invalid IR.
 // RUN: %clang_cc1 -emit-llvm-only %s
+// RUN: %clang_cc1 -emit-llvm-only -std=c++98 %s
+// RUN: %clang_cc1 -emit-llvm-only -std=c++11 %s
 
 namespace test1 {
   static void foo(); // expected-warning {{function 'test1::foo' has internal linkage but is not defined}}
@@ -15,9 +19,9 @@ namespace test1 {
 
 namespace test2 {
   namespace {
-    void foo(); // expected-warning {{function 'test2::<anonymous namespace>::foo' has internal linkage but is not defined}}
-    extern int var; // expected-warning {{variable 'test2::<anonymous namespace>::var' has internal linkage but is not defined}}
-    template <class T> void bar(); // expected-warning {{function 'test2::<anonymous namespace>::bar<int>' has internal linkage but is not defined}}
+    void foo(); // expected-warning {{function 'test2::(anonymous namespace)::foo' has internal linkage but is not defined}}
+    extern int var; // expected-warning {{variable 'test2::(anonymous namespace)::var' has internal linkage but is not defined}}
+    template <class T> void bar(); // expected-warning {{function 'test2::(anonymous namespace)::bar<int>' has internal linkage but is not defined}}
   }
   void test() {
     foo(); // expected-note {{used here}}
@@ -49,11 +53,11 @@ namespace test3 {
 namespace test4 {
   namespace {
     struct A {
-      A(); // expected-warning {{function 'test4::<anonymous namespace>::A::A' has internal linkage but is not defined}}
-      ~A();// expected-warning {{function 'test4::<anonymous namespace>::A::~A' has internal linkage but is not defined}}
-      virtual void foo(); // expected-warning {{function 'test4::<anonymous namespace>::A::foo' has internal linkage but is not defined}}
+      A(); // expected-warning {{function 'test4::(anonymous namespace)::A::A' has internal linkage but is not defined}}
+      ~A();// expected-warning {{function 'test4::(anonymous namespace)::A::~A' has internal linkage but is not defined}}
+      virtual void foo(); // expected-warning {{function 'test4::(anonymous namespace)::A::foo' has internal linkage but is not defined}}
       virtual void bar() = 0;
-      virtual void baz(); // expected-warning {{function 'test4::<anonymous namespace>::A::baz' has internal linkage but is not defined}}
+      virtual void baz(); // expected-warning {{function 'test4::(anonymous namespace)::A::baz' has internal linkage but is not defined}}
     };
   }
 
@@ -75,8 +79,8 @@ namespace test5 {
   }
 
   template <class N> struct B {
-    static int var; // expected-warning {{variable 'test5::B<test5::<anonymous>::A>::var' has internal linkage but is not defined}}
-    static void foo(); // expected-warning {{function 'test5::B<test5::<anonymous>::A>::foo' has internal linkage but is not defined}}
+    static int var; // expected-warning {{variable 'test5::B<test5::(anonymous namespace)::A>::var' has internal linkage but is not defined}}
+    static void foo(); // expected-warning {{function 'test5::B<test5::(anonymous namespace)::A>::foo' has internal linkage but is not defined}}
   };
 
   void test() {
@@ -119,7 +123,12 @@ namespace PR9323 {
   }
   void f(const Uncopyable&) {}
   void test() {
-    f(Uncopyable()); // expected-warning {{C++98 requires an accessible copy constructor}}
+    f(Uncopyable()); 
+#if __cplusplus <= 199711L // C++03 or earlier modes
+    // expected-warning@-2 {{C++98 requires an accessible copy constructor}}
+#else
+    // expected-warning@-4 {{copying parameter of type 'PR9323::(anonymous namespace)::Uncopyable' when binding a reference to a temporary would invoke an inaccessible constructor in C++98}}
+#endif
   };
 }
 
@@ -163,7 +172,7 @@ namespace cxx11_odr_rules {
 
     // Check that the checks work with unevaluated contexts
     (void)sizeof(p(A::used1));
-    (void)typeid(p(A::used1)); // xpected-note {{used here}}
+    (void)typeid(p(A::used1)); // expected-warning {{expression with side effects will be evaluated despite being used as an operand to 'typeid'}} xpected-note {{used here}}
 
     // Misc other testing
     a(A::unused, 1 ? A::used2 : A::used2); // xpected-note {{used here}}
@@ -175,7 +184,7 @@ namespace cxx11_odr_rules {
 namespace OverloadUse {
   namespace {
     void f();
-    void f(int); // expected-warning {{function 'OverloadUse::<anonymous namespace>::f' has internal linkage but is not defined}}
+    void f(int); // expected-warning {{function 'OverloadUse::(anonymous namespace)::f' has internal linkage but is not defined}}
   }
   template<void x()> void t(int*) { x(); }
   template<void x(int)> void t(long*) { x(10); } // expected-note {{used here}}
@@ -193,7 +202,7 @@ namespace test7 {
 
 namespace test8 {
   typedef struct {
-    void bar(); // expected-warning {{function 'test8::<anonymous struct>::bar' has internal linkage but is not defined}}
+    void bar(); // expected-warning {{function 'test8::(anonymous struct)::bar' has internal linkage but is not defined}}
     void foo() {
       bar(); // expected-note {{used here}}
     }
@@ -204,7 +213,7 @@ namespace test9 {
   namespace {
     struct X {
       virtual void notused() = 0;
-      virtual void used() = 0; // expected-warning {{function 'test9::<anonymous namespace>::X::used' has internal linkage but is not defined}}
+      virtual void used() = 0; // expected-warning {{function 'test9::(anonymous namespace)::X::used' has internal linkage but is not defined}}
     };
   }
   void test(X &x) {
@@ -217,7 +226,7 @@ namespace test10 {
   namespace {
     struct X {
       virtual void notused() = 0;
-      virtual void used() = 0; // expected-warning {{function 'test10::<anonymous namespace>::X::used' has internal linkage but is not defined}}
+      virtual void used() = 0; // expected-warning {{function 'test10::(anonymous namespace)::X::used' has internal linkage but is not defined}}
 
       void test() {
         notused();
@@ -244,11 +253,11 @@ namespace test11 {
     };
 
     struct B {
-      bool operator()() const;  // expected-warning {{function 'test11::<anonymous namespace>::B::operator()' has internal linkage but is not defined}}
-      void operator!() const;  // expected-warning {{function 'test11::<anonymous namespace>::B::operator!' has internal linkage but is not defined}}
-      bool operator+(const B&) const;  // expected-warning {{function 'test11::<anonymous namespace>::B::operator+' has internal linkage but is not defined}}
-      int operator[](int) const;  // expected-warning {{function 'test11::<anonymous namespace>::B::operator[]' has internal linkage but is not defined}}
-      const B* operator->() const;  // expected-warning {{function 'test11::<anonymous namespace>::B::operator->' has internal linkage but is not defined}}
+      bool operator()() const;  // expected-warning {{function 'test11::(anonymous namespace)::B::operator()' has internal linkage but is not defined}}
+      void operator!() const;  // expected-warning {{function 'test11::(anonymous namespace)::B::operator!' has internal linkage but is not defined}}
+      bool operator+(const B&) const;  // expected-warning {{function 'test11::(anonymous namespace)::B::operator+' has internal linkage but is not defined}}
+      int operator[](int) const;  // expected-warning {{function 'test11::(anonymous namespace)::B::operator[]' has internal linkage but is not defined}}
+      const B* operator->() const;  // expected-warning {{function 'test11::(anonymous namespace)::B::operator->' has internal linkage but is not defined}}
       int member;
     };
   }
@@ -278,18 +287,18 @@ namespace test12 {
     struct Cls {
       virtual void f(int) = 0;
       virtual void f(int, double) = 0;
-      void g(int);  // expected-warning {{function 'test12::<anonymous namespace>::Cls::g' has internal linkage but is not defined}}
+      void g(int);  // expected-warning {{function 'test12::(anonymous namespace)::Cls::g' has internal linkage but is not defined}}
       void g(int, double);
       virtual operator T1() = 0;
       virtual operator T2() = 0;
       virtual operator T3&() = 0;
-      operator T4();  // expected-warning {{function 'test12::<anonymous namespace>::Cls::operator T4' has internal linkage but is not defined}}
-      operator T5();  // expected-warning {{function 'test12::<anonymous namespace>::Cls::operator T5' has internal linkage but is not defined}}
-      operator T6&();  // expected-warning {{function 'test12::<anonymous namespace>::Cls::operator class test12::T6 &' has internal linkage but is not defined}}
+      operator T4();  // expected-warning {{function 'test12::(anonymous namespace)::Cls::operator T4' has internal linkage but is not defined}}
+      operator T5();  // expected-warning {{function 'test12::(anonymous namespace)::Cls::operator T5' has internal linkage but is not defined}}
+      operator T6&();  // expected-warning {{function 'test12::(anonymous namespace)::Cls::operator test12::T6 &' has internal linkage but is not defined}}
     };
 
     struct Cls2 {
-      Cls2(T7);  // expected-warning {{function 'test12::<anonymous namespace>::Cls2::Cls2' has internal linkage but is not defined}}
+      Cls2(T7);  // expected-warning {{function 'test12::(anonymous namespace)::Cls2::Cls2' has internal linkage but is not defined}}
     };
   }
 

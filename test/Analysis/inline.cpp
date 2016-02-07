@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,unix.Malloc,debug.ExprInspection -analyzer-config ipa=inlining -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,unix.Malloc,debug.ExprInspection -analyzer-config ipa=inlining -analyzer-config c++-allocator-inlining=true -verify %s
 
 void clang_analyzer_eval(bool);
 void clang_analyzer_checkInlined(bool);
@@ -9,6 +9,7 @@ extern "C" void *malloc(size_t);
 // This is the standard placement new.
 inline void* operator new(size_t, void* __p) throw()
 {
+  clang_analyzer_checkInlined(true);// expected-warning{{TRUE}}
   return __p;
 }
 
@@ -274,7 +275,7 @@ namespace DefaultArgs {
 
     clang_analyzer_eval(defaultReferenceZero(1) == -1); // expected-warning{{TRUE}}
     clang_analyzer_eval(defaultReferenceZero() == 0); // expected-warning{{TRUE}}
-}
+  }
 
   double defaultFloatReference(const double &i = 42) {
     return -i;
@@ -298,6 +299,13 @@ namespace DefaultArgs {
   void testString() {
     clang_analyzer_eval(defaultString("xyz") == 'y'); // expected-warning{{TRUE}}
     clang_analyzer_eval(defaultString() == 'b'); // expected-warning{{TRUE}}
+  }
+
+  const void * const void_string = "abc";
+
+  void testBitcastedString() {
+    clang_analyzer_eval(0 != void_string); // expected-warning{{TRUE}}
+    clang_analyzer_eval('b' == ((char *)void_string)[1]); // expected-warning{{TRUE}}
   }
 }
 

@@ -1,15 +1,28 @@
 set( LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
-  asmparser
-  bitreader
-  bitwriter
-  irreader
-  codegen
-  instrumentation
-  ipo
-  linker
-  selectiondag
+  Analysis
+  CodeGen
+  Core
+  IPO
+  InstCombine
+  Instrumentation
+  MC
+  MCParser
+  ObjCARCOpts
+  Option
+  ScalarOpts
+  Support
+  TransformUtils
+  Vectorize
   )
+
+option(CLANG_PLUGIN_SUPPORT "Build clang with plugin support" ON)
+
+# Support plugins. This must be before add_clang_executable as it reads
+# LLVM_NO_DEAD_STRIP.
+if(CLANG_PLUGIN_SUPPORT)
+  set(LLVM_NO_DEAD_STRIP 1)
+endif()
 
 add_clang_executable(clang
   driver.cpp
@@ -18,77 +31,49 @@ add_clang_executable(clang
   )
 
 target_link_libraries(clang
-  clangFrontendTool
-  clangAST
-  clangAnalysis
   clangBasic
   clangCodeGen
   clangDriver
-  clangEdit
   clangFrontend
-  clangLex
-  clangParse
-  clangEdit
-  clangSema
-  clangSerialization
+  clangFrontendTool
   )
 
-if(CLANG_ENABLE_STATIC_ANALYZER)
-  target_link_libraries(clang
-    clangStaticAnalyzerFrontend
-    clangStaticAnalyzerCheckers
-    clangStaticAnalyzerCore
-    )
+if(WIN32 AND NOT CYGWIN)
+  # Prevent versioning if the buildhost is targeting for Win32.
+else()
+  set_target_properties(clang PROPERTIES VERSION ${CLANG_EXECUTABLE_VERSION})
 endif()
 
-if(CLANG_ENABLE_ARCMT)
-  target_link_libraries(clang
-    clangARCMigrate
-    )
+# Support plugins.
+if(CLANG_PLUGIN_SUPPORT)
+  export_executable_symbols(clang)
 endif()
-
-if(CLANG_ENABLE_REWRITER)
-  target_link_libraries(clang
-    clangRewriteCore
-    clangRewriteFrontend
-    )
-endif()
-
-set_target_properties(clang PROPERTIES VERSION ${CLANG_EXECUTABLE_VERSION})
-set_target_properties(clang PROPERTIES ENABLE_EXPORTS 1)
 
 add_dependencies(clang clang-headers)
 
-if(UNIX)
-  set(CLANGXX_LINK_OR_COPY create_symlink)
-# Create a relative symlink
-  set(clang_binary "clang${CMAKE_EXECUTABLE_SUFFIX}")
-else()
-  set(CLANGXX_LINK_OR_COPY copy)
-  set(clang_binary "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}/clang${CMAKE_EXECUTABLE_SUFFIX}")
+install(TARGETS clang
+  RUNTIME DESTINATION bin
+  COMPONENT clang)
+
+if(NOT CMAKE_CONFIGURATION_TYPES)
+  add_custom_target(install-clang
+    DEPENDS clang
+    COMMAND "${CMAKE_COMMAND}"
+            -DCMAKE_INSTALL_COMPONENT=clang
+            -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
 endif()
 
-# Create the clang++ symlink in the build directory.
-set(clang_pp "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}/clang++${CMAKE_EXECUTABLE_SUFFIX}")
-add_custom_command(TARGET clang POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY} "${clang_binary}" "${clang_pp}")
+if(NOT CLANG_LINKS_TO_CREATE)
+  set(CLANG_LINKS_TO_CREATE clang++ clang-cl)
 
-set_property(DIRECTORY APPEND
-  PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${clang_pp})
+  if (WIN32)
+    list(APPEND CLANG_LINKS_TO_CREATE ../msbuild-bin/cl)
+  endif()
+endif()
 
-# Create the clang-cl symlink in the build directory.
-set(clang_cl "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}/clang-cl${CMAKE_EXECUTABLE_SUFFIX}")
-add_custom_command(TARGET clang POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY} "${clang_binary}" "${clang_cl}")
-
-set_property(DIRECTORY APPEND
-  PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${clang_cl})
-
-install(TARGETS clang
-  RUNTIME DESTINATION bin)
-
-# Create the clang++ and clang-cl symlinks at installation time.
-install(SCRIPT clang_symlink.cmake -DCMAKE_INSTALL_PREFIX=\"${CMAKE_INSTALL_PREFIX}\")
+foreach(link ${CLANG_LINKS_TO_CREATE})
+  add_clang_symlink(${link} clang)
+endforeach()
 
 # Configure plist creation for OS X.
 set (TOOL_INFO_PLIST "Info.plist" CACHE STRING "Plist name")
@@ -101,10 +86,7 @@ if (APPLE)
 
   set(TOOL_INFO_UTI "${CLANG_VENDOR_UTI}")
   set(TOOL_INFO_VERSION "${CLANG_VERSION}")
-  if (LLVM_SUBMIT_VERSION)
-    set(TOOL_INFO_BUILD_VERSION
-      "${LLVM_SUBMIT_VERSION}.${LLVM_SUBMIT_SUBVERSION}")
-  endif()
+  set(TOOL_INFO_BUILD_VERSION "${LLVM_MAJOR_VERSION}.${LLVM_MINOR_VERSION}")
   
   set(TOOL_INFO_PLIST_OUT "${CMAKE_CURRENT_BINARY_DIR}/${TOOL_INFO_PLIST}")
   target_link_libraries(clang
@@ -121,3 +103,11 @@ if(CLANG_ORDER_FILE)
   target_link_libraries(clang "-Wl,-order_file,${CLANG_ORDER_FILE}")
 endif()
 
+if(WITH_POLLY AND LINK_POLLY_INTO_TOOLS)
+  target_link_libraries(clang Polly)
+  if(POLLY_LINK_LIBS)
+    foreach(lib ${POLLY_LINK_LIBS})
+      target_link_libraries(clang ${lib})
+    endforeach(lib)
+  endif(POLLY_LINK_LIBS)
+endif(WITH_POLLY AND LINK_POLLY_INTO_TOOLS)

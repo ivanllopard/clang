@@ -1,4 +1,7 @@
-// RUN: %clang_cc1 -emit-llvm %s -o - | grep _Z1fPA10_1X
+// RUN: %clang_cc1 -triple %itanium_abi_triple -emit-llvm %s -o - | FileCheck %s
+// CHECK: _Z1fPA10_1X
+// CHECK: _Z1fPFvE
+
 int __attribute__((overloadable)) f(int x) { return x; }
 float __attribute__((overloadable)) f(float x) { return x; }
 double __attribute__((overloadable)) f(double x) { return x; }
@@ -10,6 +13,8 @@ struct X { };
 void  __attribute__((overloadable)) f(struct X (*ptr)[10]) { }
 
 void __attribute__((overloadable)) f(int x, int y, ...) { }
+
+void __attribute__((overloadable)) f(void (*x)()) {}
 
 int main() {
   int iv = 17;

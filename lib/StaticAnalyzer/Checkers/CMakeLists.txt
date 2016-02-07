@@ -3,6 +3,10 @@ clang_tablegen(Checkers.inc -gen-clang-sa-checkers
   SOURCE Checkers.td
   TARGET ClangSACheckers)
 
+set(LLVM_LINK_COMPONENTS
+  Support
+  )
+
 add_clang_library(clangStaticAnalyzerCheckers
   AllocationDiagnostics.cpp
   AnalyzerStatsChecker.cpp
@@ -29,13 +33,14 @@ add_clang_library(clangStaticAnalyzerCheckers
   DirectIvarAssignment.cpp
   DivZeroChecker.cpp
   DynamicTypePropagation.cpp
+  DynamicTypeChecker.cpp
   ExprInspectionChecker.cpp
   FixedAddressChecker.cpp
   GenericTaintChecker.cpp
-  IdempotentOperationChecker.cpp
   IdenticalExprChecker.cpp
   IvarInvalidationChecker.cpp
   LLVMConventionsChecker.cpp
+  LocalizationChecker.cpp
   MacOSKeychainAPIChecker.cpp
   MacOSXAPIChecker.cpp
   MallocChecker.cpp
@@ -45,12 +50,14 @@ add_clang_library(clangStaticAnalyzerCheckers
   NSErrorChecker.cpp
   NoReturnFunctionChecker.cpp
   NonNullParamChecker.cpp
+  NullabilityChecker.cpp
   ObjCAtSyncChecker.cpp
   ObjCContainersASTChecker.cpp
   ObjCContainersChecker.cpp
   ObjCMissingSuperCallChecker.cpp
   ObjCSelfInitChecker.cpp
   ObjCUnusedIVarsChecker.cpp
+  PaddingChecker.cpp
   PointerArithChecker.cpp
   PointerSubChecker.cpp
   PthreadLockChecker.cpp
@@ -61,6 +68,7 @@ add_clang_library(clangStaticAnalyzerCheckers
   StackAddrEscapeChecker.cpp
   StreamChecker.cpp
   TaintTesterChecker.cpp
+  TestAfterDivZeroChecker.cpp
   TraversalChecker.cpp
   UndefBranchChecker.cpp
   UndefCapturedBlockVarChecker.cpp
@@ -69,23 +77,17 @@ add_clang_library(clangStaticAnalyzerCheckers
   UndefinedAssignmentChecker.cpp
   UnixAPIChecker.cpp
   UnreachableCodeChecker.cpp
+  VforkChecker.cpp
   VLASizeChecker.cpp
   VirtualCallChecker.cpp
-  )
 
-add_dependencies(clangStaticAnalyzerCheckers
-  clangStaticAnalyzerCore
-  ClangAttrClasses
-  ClangAttrList
-  ClangCommentNodes
-  ClangDeclNodes
-  ClangDiagnosticCommon
-  ClangStmtNodes
+  DEPENDS
   ClangSACheckers
-  )
 
-target_link_libraries(clangStaticAnalyzerCheckers
-  clangBasic
+  LINK_LIBS
   clangAST
+  clangAnalysis
+  clangBasic
+  clangLex
   clangStaticAnalyzerCore
   )

@@ -70,7 +70,7 @@
 // rdar://9341593
 @interface Gorf  {
    id __unsafe_unretained x;
-   id y; // expected-error {{existing instance variable 'y' for property 'y' with  assign attribute must be __unsafe_unretained}}
+   id y; // expected-error {{existing instance variable 'y' for property 'y' with assign attribute must be __unsafe_unretained}}
 }
 @property(assign) id __unsafe_unretained x;
 @property(assign) id y; // expected-note {{property declared here}}
@@ -154,7 +154,7 @@
 @property  id prop;
 @property  __strong id strong_prop;
 @property  (strong) id strong_attr_prop;
-@property  (strong) __strong id realy_strong_attr_prop;
+@property  (strong) __strong id really_strong_attr_prop;
 + (id) alloc;
 - (id) init;
 - (id) implicit;
@@ -165,7 +165,7 @@ void foo(Baz *f) {
         f.prop = [[Baz alloc] init];
         f.strong_prop = [[Baz alloc] init];
         f.strong_attr_prop = [[Baz alloc] init];
-        f.realy_strong_attr_prop = [[Baz alloc] init];
+        f.really_strong_attr_prop = [[Baz alloc] init];
         f.implicit = [[Baz alloc] init];
 }
 
@@ -180,7 +180,7 @@ void foo(Baz *f) {
 @end
 
 @interface Foo2 {
-  id _prop; // expected-error {{existing instance variable '_prop' for property 'prop' with  assign attribute must be __unsafe_unretained}}
+  id _prop; // expected-error {{existing instance variable '_prop' for property 'prop' with assign attribute must be __unsafe_unretained}}
 }
 @property (nonatomic, assign) id prop; // expected-note {{property declared here}}
 @end

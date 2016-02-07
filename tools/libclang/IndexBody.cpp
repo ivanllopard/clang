@@ -8,14 +8,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "IndexingContext.h"
-#include "RecursiveASTVisitor.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 
 using namespace clang;
 using namespace cxindex;
 
 namespace {
 
-class BodyIndexer : public cxindex::RecursiveASTVisitor<BodyIndexer> {
+class BodyIndexer : public RecursiveASTVisitor<BodyIndexer> {
   IndexingContext &IndexCtx;
   const NamedDecl *Parent;
   const DeclContext *ParentDC;
@@ -125,10 +125,11 @@ public:
     return true;
   }
 
-  bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+  bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr *E,
+                                   DataRecursionQueue *Q = nullptr) {
     if (E->getOperatorLoc().isInvalid())
       return true; // implicit.
-    return base::TraverseCXXOperatorCallExpr(E);
+    return base::TraverseCXXOperatorCallExpr(E, Q);
   }
 
   bool VisitDeclStmt(DeclStmt *S) {
@@ -149,13 +150,13 @@ public:
     return true;
   }
 
-  bool TraverseLambdaCapture(LambdaExpr::Capture C) {
-    if (C.capturesThis())
+  bool TraverseLambdaCapture(LambdaExpr *LE, const LambdaCapture *C) {
+    if (C->capturesThis() || C->capturesVLAType())
       return true;
 
-    if (C.capturesVariable() && IndexCtx.shouldIndexFunctionLocalSymbols())
-      IndexCtx.handleReference(C.getCapturedVar(), C.getLocation(),
-                               Parent, ParentDC);
+    if (C->capturesVariable() && IndexCtx.shouldIndexFunctionLocalSymbols())
+      IndexCtx.handleReference(C->getCapturedVar(), C->getLocation(), Parent,
+                               ParentDC);
 
     // FIXME: Lambda init-captures.
     return true;
@@ -170,7 +171,7 @@ void IndexingContext::indexBody(const Stmt *S, const NamedDecl *Parent,
   if (!S)
     return;
 
-  if (DC == 0)
+  if (!DC)
     DC = Parent->getLexicalDeclContext();
   BodyIndexer(*this, Parent, DC).TraverseStmt(const_cast<Stmt*>(S));
 }

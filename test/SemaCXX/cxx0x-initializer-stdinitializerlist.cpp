@@ -117,7 +117,10 @@ void argument_deduction() {
 
 void auto_deduction() {
   auto l = {1, 2, 3, 4};
+  auto l2 {1, 2, 3, 4}; // expected-error {{initializer for variable 'l2' with type 'auto' contains multiple expressions}}
+  auto l3 {1};
   static_assert(same_type<decltype(l), std::initializer_list<int>>::value, "");
+  static_assert(same_type<decltype(l3), int>::value, "");
   auto bl = {1, 2.0}; // expected-error {{cannot deduce}}
 
   for (int i : {1, 2, 3, 4}) {}
@@ -189,7 +192,7 @@ namespace rdar11948732 {
 }
 
 namespace PR14272 {
-  auto x { { 0, 0 } }; // expected-error {{cannot deduce actual type for variable 'x' with type 'auto' from initializer list}}
+  auto x { { 0, 0 } }; // expected-error {{cannot deduce type for variable 'x' with type 'auto' from nested initializer list}}
 }
 
 namespace initlist_of_array {
@@ -224,4 +227,85 @@ namespace RefVersusInitList {
   void f(const S &) = delete;
   void f(std::initializer_list<S>);
   void g(S s) { f({S()}); }
+}
+
+namespace PR18013 {
+  int f();
+  std::initializer_list<long (*)()> x = {f}; // expected-error {{cannot initialize an array element of type 'long (*const)()' with an lvalue of type 'int ()': different return type ('long' vs 'int')}}
+}
+
+namespace DR1070 {
+  struct S {
+    S(std::initializer_list<int>);
+  };
+  S s[3] = { {1, 2, 3}, {4, 5} }; // ok
+  S *p = new S[3] { {1, 2, 3}, {4, 5} }; // ok
+}
+
+namespace ListInitInstantiate {
+  struct A {
+    A(std::initializer_list<A>);
+    A(std::initializer_list<int>);
+  };
+  struct B : A {
+    B(int);
+  };
+  template<typename T> struct X {
+    X();
+    A a;
+  };
+  template<typename T> X<T>::X() : a{B{0}, B{1}} {}
+
+  X<int> x;
+
+  int f(const A&);
+  template<typename T> void g() { int k = f({0}); }
+  template void g<int>();
+}
+
+namespace TemporaryInitListSourceRange_PR22367 {
+  struct A {
+    constexpr A() {}
+    A(std::initializer_list<int>); // expected-note {{here}}
+  };
+  constexpr int f(A) { return 0; }
+  constexpr int k = f( // expected-error {{must be initialized by a constant expression}}
+      // The point of this test is to check that the caret points to
+      // 'std::initializer_list', not to '{0}'.
+      std::initializer_list // expected-note {{constructor}}
+      <int>
+      {0}
+      );
+}
+
+namespace ParameterPackNestedInitializerLists_PR23904c3 {
+  template <typename ...T>
+  void f(std::initializer_list<std::initializer_list<T>> ...tt);
+
+  void foo() { f({{0}}, {{'\0'}}); }
+}
+
+namespace update_rbrace_loc_crash {
+  // We used to crash-on-invalid on this example when updating the right brace
+  // location.
+  template <typename T, T>
+  struct A {};
+  template <typename T, typename F, int... I>
+  std::initializer_list<T> ExplodeImpl(F p1, A<int, I...>) {
+    // expected-error@+1 {{reference to type 'const update_rbrace_loc_crash::Incomplete' could not bind to an rvalue of type 'void'}}
+    return {p1(I)...};
+  }
+  template <typename T, int N, typename F>
+  void Explode(F p1) {
+    // expected-note@+1 {{in instantiation of function template specialization}}
+    ExplodeImpl<T>(p1, A<int, N>());
+  }
+  class Incomplete;
+  struct ContainsIncomplete {
+    const Incomplete &obstacle;
+  };
+  void f() {
+    // expected-note@+1 {{in instantiation of function template specialization}}
+    Explode<ContainsIncomplete, 4>([](int) {});
+  }
 }

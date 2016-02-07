@@ -1,6 +1,3 @@
-// Don't attempt slash switches on msys bash.
-// REQUIRES: shell-preserves-root
-
 // Note: we have to quote the /? option, otherwise some shells will try to
 // expand the ? into a one-letter filename in the root directory, and make
 // the test fail is such a file or directory exists.
@@ -31,5 +28,4 @@
 // CL-NOT: -fapple-kext
 
 // RUN: %clang_cl /c -### -- %s 2>&1 | FileCheck -check-prefix=COMPILE %s
-// COMPILE: "-cxx-abi" "microsoft"
 // COMPILE: "-fdiagnostics-format" "msvc"

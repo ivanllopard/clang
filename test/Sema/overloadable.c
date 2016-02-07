@@ -1,6 +1,6 @@
 // RUN: %clang_cc1 -fsyntax-only -verify %s
 
-int var __attribute__((overloadable)); // expected-error{{'overloadable' attribute can only be applied to a function}}
+int var __attribute__((overloadable)); // expected-error{{'overloadable' attribute only applies to functions}}
 void params(void) __attribute__((overloadable(12))); // expected-error {{'overloadable' attribute takes no arguments}}
 
 int *f(int) __attribute__((overloadable)); // expected-note 2{{previous overload of function is here}}
@@ -85,3 +85,17 @@ void local() {
 void after_local_1(int) __attribute__((overloadable)); // expected-error {{conflicting types}}
 void after_local_2(int); // expected-error {{must have the 'overloadable' attribute}}
 void after_local_3(int) __attribute__((overloadable));
+
+// Make sure we allow C-specific conversions in C.
+void conversions() {
+  void foo(char *c) __attribute__((overloadable));
+  void foo(char *c) __attribute__((overloadable, enable_if(c, "nope.jpg")));
+
+  void *ptr;
+  foo(ptr);
+
+  void multi_type(unsigned char *c) __attribute__((overloadable));
+  void multi_type(signed char *c) __attribute__((overloadable));
+  unsigned char *c;
+  multi_type(c);
+}

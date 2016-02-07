@@ -159,8 +159,16 @@ void notifyBlock(id dependentBlock) {
 
 void test_empty_block() {
 // 01 00
-// CHECK-LP64: block variable layout for block: 0x01, 0x00
+// CHECK-LP64: block variable layout for block: 0x01, 0x30, 0x00
   void (^wrapperBlock)() = ^() {
   };
  wrapperBlock();
+}
+
+// rdar://16111839
+typedef union { char ch[8];  } SS;
+typedef struct { SS s[4]; } CS;
+void test_union_in_layout() {
+  CS cs;
+  ^{ cs; };
 }

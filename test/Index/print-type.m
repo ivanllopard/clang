@@ -3,6 +3,7 @@
 -(int) mymethod;
 -(const id) mymethod2:(id)x blah:(Class)y boo:(SEL)z;
 -(bycopy)methodIn:(in int)i andOut:(out short *)j , ...;
+-(void)kindof_meth:(__kindof Foo *)p;
 @end
 
 // RUN: c-index-test -test-print-type %s | FileCheck %s
@@ -12,4 +13,5 @@
 // CHECK: ParmDecl=z:4:52 (Definition) [type=SEL] [typekind=ObjCSel] [canonicaltype=SEL *] [canonicaltypekind=Pointer] [isPOD=1]
 // CHECK: ObjCInstanceMethodDecl=methodIn:andOut::5:10 (variadic) [Bycopy,] [type=] [typekind=Invalid] [resulttype=id] [resulttypekind=ObjCId] [args= [int] [Int] [short *] [Pointer]] [isPOD=0]
 // CHECK: ParmDecl=i:5:27 (Definition) [In,] [type=int] [typekind=Int] [isPOD=1]
-// CHECK: ParmDecl=j:5:49 (Definition) [Out,] [type=short *] [typekind=Pointer] [isPOD=1]
+// CHECK: ParmDecl=j:5:49 (Definition) [Out,] [type=short *] [typekind=Pointer] [isPOD=1] [pointeetype=short] [pointeekind=Short]
+// CHECK: ParmDecl=p:6:36 (Definition) [type=__kindof Foo *] [typekind=ObjCObjectPointer] [canonicaltype=__kindof Foo *] [canonicaltypekind=ObjCObjectPointer] [isPOD=1] [pointeetype=Foo] [pointeekind=ObjCInterface]

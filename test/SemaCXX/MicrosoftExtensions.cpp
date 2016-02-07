@@ -1,10 +1,6 @@
 // RUN: %clang_cc1 %s -triple i686-pc-win32 -fsyntax-only -Wmicrosoft -Wc++11-extensions -Wno-long-long -verify -fms-extensions -fexceptions -fcxx-exceptions
 
 
-// ::type_info is predeclared with forward class declartion
-void f(const type_info &a);
-
-
 // Microsoft doesn't validate exception specification.
 namespace microsoft_exception_spec {
 
@@ -37,11 +33,11 @@ class B : public A {
 // MSVC allows type definition in anonymous union and struct
 struct A
 {
-  union 
+  union
   {
     int a;
     struct B  // expected-warning {{types declared in an anonymous union are a Microsoft extension}}
-    { 
+    {
       int c;
     } d;
 
@@ -63,7 +59,7 @@ struct A
     {
       int c2;
     } d2;
-    
+
 	union C2  // expected-warning {{types declared in an anonymous struct are a Microsoft extension}}
     {
       int e2;
@@ -78,11 +74,12 @@ struct A
 // __stdcall handling
 struct M {
     int __stdcall addP();
-    float __stdcall subtractP(); 
+    float __stdcall subtractP();
 };
 
 // __unaligned handling
 typedef char __unaligned *aligned_type;
+typedef struct UnalignedTag { int f; } __unaligned *aligned_type2;
 
 
 template<typename T> void h1(T (__stdcall M::* const )()) { }
@@ -90,7 +87,7 @@ template<typename T> void h1(T (__stdcall M::* const )()) { }
 void m1() {
   h1<int>(&M::addP);
   h1(&M::subtractP);
-} 
+}
 
 
 
@@ -98,7 +95,7 @@ void m1() {
 
 void f(long long);
 void f(int);
- 
+
 int main()
 {
   // This is an ambiguous call in standard C++.
@@ -123,10 +120,11 @@ enum : long long {  // expected-warning{{enumeration types with a fixed underlyi
 
 class AAA {
 __declspec(dllimport) void f(void) { }
-void f2(void);
+void f2(void); // expected-note{{previous declaration is here}}
 };
 
-__declspec(dllimport) void AAA::f2(void) { // expected-error {{dllimport attribute can be applied only to symbol}}
+__declspec(dllimport) void AAA::f2(void) { // expected-error{{dllimport cannot be applied to non-inline function definition}}
+                                           // expected-error@-1{{redeclaration of 'AAA::f2' cannot add 'dllimport' attribute}}
 
 }
 
@@ -147,20 +145,13 @@ extern void static_func();
 void static_func(); // expected-note {{previous declaration is here}}
 
 
-static void static_func() // expected-warning {{static declaration of 'static_func' follows non-static declaration}}
+static void static_func() // expected-warning {{redeclaring non-static 'static_func' as static is a Microsoft extension}}
 {
 
 }
 
-long function_prototype(int a);
-long (*function_ptr)(int a);
-
-void function_to_voidptr_conv() {
-   void *a1 = function_prototype;
-   void *a2 = &function_prototype;
-   void *a3 = function_ptr;
-}
-
+extern const int static_var; // expected-note {{previous declaration is here}}
+static const int static_var = 3; // expected-warning {{redeclaring non-static 'static_var' as static is a Microsoft extension}}
 
 void pointer_to_integral_type_conv(char* ptr) {
    char ch = (char)ptr;
@@ -174,29 +165,6 @@ void pointer_to_integral_type_conv(char* ptr) {
 
    // This is bad.
    b = reinterpret_cast<bool>(ptr); // expected-error {{cast from pointer to smaller type 'bool' loses information}}
-}
-
-namespace friend_as_a_forward_decl {
-
-class A {
-  class Nested {
-    friend class B;
-    B* b;
-  };
-  B* b;
-};
-B* global_b;
-
-
-void f()
-{
-  class Local {
-    friend class Z;
-    Z* b;
-  };
-  Z* b;
-}
-
 }
 
 struct PR11150 {
@@ -307,7 +275,7 @@ struct SP9 {
   __declspec(property(get=GetV, put=SetV)) T V;
   T GetV() { return 0; }
   void SetV(T v) {}
-  void f() { V = this->V; V < this->V; }
+  bool f() { V = this->V; return V < this->V; }
   void g() { V++; }
   void h() { V*=2; }
 };
@@ -366,20 +334,32 @@ struct StructWithUnnamedMember {
   __declspec(property(get=GetV)) int : 10; // expected-error {{anonymous property is not supported}}
 };
 
+struct MSPropertyClass {
+  int get() { return 42; }
+  int __declspec(property(get = get)) n;
+};
+
+int *f(MSPropertyClass &x) {
+  return &x.n; // expected-error {{address of property expression requested}}
+}
+int MSPropertyClass::*g() {
+  return &MSPropertyClass::n; // expected-error {{address of property expression requested}}
+}
+
 namespace rdar14250378 {
   class Bar {};
-  
+
   namespace NyNamespace {
     class Foo {
     public:
       Bar* EnsureBar();
     };
-    
+
     class Baz : public Foo {
     public:
       friend class Bar;
     };
-    
+
     Bar* Foo::EnsureBar() {
       return 0;
     }
@@ -395,14 +375,15 @@ struct SomeBase {
 
   // expected-note@+2 {{overridden virtual function is here}}
   // expected-warning@+1 {{'sealed' keyword is a Microsoft extension}}
-  virtual void SealedFunction() sealed;
+  virtual void SealedFunction() sealed; // expected-note {{overridden virtual function is here}}
 };
 
 // expected-note@+2 {{'SealedType' declared here}}
 // expected-warning@+1 {{'sealed' keyword is a Microsoft extension}}
 struct SealedType sealed : SomeBase {
-  // expected-error@+1 {{declaration of 'SealedFunction' overrides a 'sealed' function}}
-  virtual void SealedFunction();
+  // expected-error@+2 {{declaration of 'SealedFunction' overrides a 'sealed' function}}
+  // FIXME. warning can be suppressed if we're also issuing error for overriding a 'final' function.
+  virtual void SealedFunction(); // expected-warning {{'SealedFunction' overrides a member function but is not marked 'override'}}
 
   // expected-warning@+1 {{'override' keyword is a C++11 extension}}
   virtual void OverrideMe() override;
@@ -410,3 +391,32 @@ struct SealedType sealed : SomeBase {
 
 // expected-error@+1 {{base 'SealedType' is marked 'sealed'}}
 struct InheritFromSealed : SealedType {};
+
+void AfterClassBody() {
+  // expected-warning@+1 {{attribute 'deprecated' is ignored, place it after "struct" to apply attribute to type declaration}}
+  struct D {} __declspec(deprecated);
+
+  struct __declspec(align(4)) S {} __declspec(align(8)) s1;
+  S s2;
+  _Static_assert(__alignof(S) == 4, "");
+  _Static_assert(__alignof(s1) == 8, "");
+  _Static_assert(__alignof(s2) == 4, "");
+}
+
+namespace PR24246 {
+template <typename TX> struct A {
+  template <bool> struct largest_type_select;
+  // expected-warning@+1 {{explicit specialization of 'largest_type_select' within class scope is a Microsoft extension}}
+  template <> struct largest_type_select<false> {
+    blah x;  // expected-error {{unknown type name 'blah'}}
+  };
+};
+}
+
+namespace PR25265 {
+struct S {
+  int fn() throw(); // expected-note {{previous declaration is here}}
+};
+
+int S::fn() { return 0; } // expected-warning {{is missing exception specification}}
+}

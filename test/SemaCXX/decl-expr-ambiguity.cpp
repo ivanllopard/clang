@@ -1,4 +1,6 @@
 // RUN: %clang_cc1 -Wno-int-to-pointer-cast -fsyntax-only -verify -pedantic-errors %s
+// RUN: %clang_cc1 -Wno-int-to-pointer-cast -fsyntax-only -verify -pedantic-errors -std=gnu++98 %s
+// RUN: %clang_cc1 -Wno-int-to-pointer-cast -fsyntax-only -verify -pedantic-errors -std=gnu++11 %s
 // RUN: %clang_cc1 -Wno-int-to-pointer-cast -fsyntax-only -verify -pedantic-errors -x objective-c++ %s
 
 void f() {
@@ -33,7 +35,7 @@ void f() {
   extern T f3();
   __typeof(*T()) f4(); // expected-warning {{empty parentheses interpreted as a function declaration}} expected-note {{replace parentheses with an initializer}}
   typedef void *V;
-  __typeof(*V()) f5();
+  __typeof(*V()) f5(); // expected-error {{ISO C++ does not allow indirection on operand of type 'V' (aka 'void *')}}
   T multi1,
     multi2(); // expected-warning {{empty parentheses interpreted as a function declaration}} expected-note {{replace parentheses with an initializer}}
   T(d)[5]; // expected-error {{redefinition of 'd'}}
@@ -60,6 +62,9 @@ namespace N {
     func(); // expected-warning {{function declaration}} expected-note {{replace parentheses with an initializer}}
 
     S s(); // expected-warning {{function declaration}}
+#if __cplusplus >= 201103L
+    // expected-note@-2 {{replace parentheses with an initializer to declare a variable}}
+#endif
   }
   void nonEmptyParens() {
     int f = 0, // g = 0; expected-note {{change this ',' to a ';' to call 'func2'}}

@@ -1,4 +1,7 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.cocoa.NonNilReturnValue,osx.cocoa.NilArg,osx.cocoa.Loops -verify -Wno-objc-root-class %s
+// RUN: %clang_cc1  -Wno-objc-literal-conversion -analyze -analyzer-checker=core,osx.cocoa.NonNilReturnValue,osx.cocoa.NilArg,osx.cocoa.Loops,debug.ExprInspection -verify -Wno-objc-root-class %s
+
+void clang_analyzer_eval(int);
+
 typedef unsigned long NSUInteger;
 typedef signed char BOOL;
 typedef struct _NSZone NSZone;
@@ -21,6 +24,8 @@ typedef struct _NSZone NSZone;
 @interface NSObject <NSObject> {}
 - (id)init;
 + (id)alloc;
+
+- (id)mutableCopy;
 @end
 
 typedef struct {
@@ -150,13 +155,12 @@ void testNilArgNSMutableDictionary3(NSMutableDictionary *d) {
 }
 
 void testNilArgNSMutableDictionary5(NSMutableDictionary *d, NSString* key) {
-  d[key] = 0; // expected-warning {{Value stored into 'NSMutableDictionary' cannot be nil}}
+  d[key] = 0; // no-warning - removing the mapping for the given key
 }
 void testNilArgNSMutableDictionary6(NSMutableDictionary *d, NSString *key) {
   if (key)
     ;
   d[key] = 0; // expected-warning {{'NSMutableDictionary' key cannot be nil}}
-  // expected-warning@-1 {{Value stored into 'NSMutableDictionary' cannot be nil}}
 }
 
 NSDictionary *testNilArgNSDictionary1(NSString* key) {
@@ -276,3 +280,33 @@ void testCountAwareNSOrderedSet(NSOrderedSet *containers, int *validptr) {
 	}
 }
 
+void testLiteralsNonNil() {
+  clang_analyzer_eval(!!@[]); // expected-warning{{TRUE}}
+  clang_analyzer_eval(!!@{}); // expected-warning{{TRUE}}
+}
+
+@interface NSMutableArray (MySafeAdd)
+- (void)addObject:(id)obj safe:(BOOL)safe;
+@end
+
+void testArrayCategory(NSMutableArray *arr) {
+  [arr addObject:0 safe:1]; // no-warning
+}
+
+@interface MyView : NSObject
+-(NSArray *)subviews;
+@end
+
+void testNoReportWhenReceiverNil(NSMutableArray *array, int b) {
+  // Don't warn about adding nil to a container when the receiver is also
+  // definitely nil.
+  if (array == 0) {
+    [array addObject:0]; // no-warning
+  }
+
+  MyView *view = b ? [[MyView alloc] init] : 0;
+  NSMutableArray *subviews = [[view subviews] mutableCopy];
+  // When view is nil, subviews is also nil so there should be no warning
+  // here either.
+  [subviews addObject:view]; // no-warning
+}

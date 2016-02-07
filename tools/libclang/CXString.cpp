@@ -51,7 +51,7 @@ CXString createEmpty() {
 
 CXString createNull() {
   CXString Str;
-  Str.data = 0;
+  Str.data = nullptr;
   Str.private_flags = CXS_Unmanaged;
   return Str;
 }
@@ -81,7 +81,11 @@ CXString createDup(const char *String) {
 
 CXString createRef(StringRef String) {
   // If the string is not nul-terminated, we have to make a copy.
-  // This is doing a one past end read, and should be removed!
+
+  // FIXME: This is doing a one past end read, and should be removed! For memory
+  // we don't manage, the API string can become unterminated at any time outside
+  // our control.
+
   if (!String.empty() && String.data()[String.size()] != 0)
     return createDup(String);
 
@@ -106,6 +110,15 @@ CXString createCXString(CXStringBuf *buf) {
   Str.data = buf;
   Str.private_flags = (unsigned) CXS_StringBuf;
   return Str;
+}
+
+CXStringSet *createSet(const std::vector<std::string> &Strings) {
+  CXStringSet *Set = new CXStringSet;
+  Set->Count = Strings.size();
+  Set->Strings = new CXString[Set->Count];
+  for (unsigned SI = 0, SE = Set->Count; SI < SE; ++SI)
+    Set->Strings[SI] = createDup(Strings[SI]);
+  return Set;
 }
 
 
@@ -171,5 +184,13 @@ void clang_disposeString(CXString string) {
       break;
   }
 }
+
+void clang_disposeStringSet(CXStringSet *set) {
+  for (unsigned SI = 0, SE = set->Count; SI < SE; ++SI)
+    clang_disposeString(set->Strings[SI]);
+  delete[] set->Strings;
+  delete set;
+}
+
 } // end: extern "C"
 
