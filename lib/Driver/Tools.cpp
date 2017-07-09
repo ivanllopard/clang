@@ -10680,11 +10680,10 @@ void nios2::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   const char *GCCName = "nios2-elf-as";
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
-  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
-
+  auto *Exec = Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
+
 void nios2::Link::RenderExtraToolArgs(const JobAction &JA,
                                     ArgStringList &CmdArgs) const {
   // The types are (hopefully) good enough.
@@ -10831,6 +10830,7 @@ void nios2::Link::ConstructJob(Compilation &C, const JobAction &JA,
   //----------------------------------------------------------------------------
 
   std::string Linker = ToolChain.GetProgramPath("nios2-elf-ld");
-  C.addCommand(new Command(JA, *this, Args.MakeArgString(Linker), CmdArgs));
+  auto *Exec = Args.MakeArgString(Linker);
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 // Nios2 tools end.

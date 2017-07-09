@@ -7082,14 +7082,15 @@ protected:
 
 public:
   Nios2TargetInfoBase(const llvm::Triple& triple,
-                     const std::string& ABIStr,
-                     const std::string& CPUStr)
+                      const std::string& ABIStr,
+                      const std::string& CPUStr)
     : TargetInfo(triple),
       CPU(CPUStr),
       ABI(ABIStr)
   {}
 
-  virtual const char *getABI() const { return ABI.c_str(); }
+  StringRef getABI() const override { return ABI; }
+
   virtual bool setABI(const std::string &Name) = 0;
   virtual bool setCPU(const std::string &Name) {
     CPU = Name;
@@ -7099,8 +7100,8 @@ public:
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const {
   }
 
-  virtual void getTargetDefines(const LangOptions &Opts,
-                                MacroBuilder &Builder) const {
+  void getTargetDefines(const LangOptions &Opts,
+                        MacroBuilder &Builder) const override {
     DefineStd(Builder, "nios2", Opts);
     Builder.defineMacro("_nios2");
 
@@ -7109,19 +7110,20 @@ public:
     Builder.defineMacro("__IEEE_LITTLE_ENDIAN");
   }
 
-  virtual void getTargetBuiltins(const Builtin::Info *&Records,
-                                 unsigned &NumRecords) const {
-    Records = BuiltinInfo;
-    NumRecords = clang::Nios2::LastTSBuiltin - Builtin::FirstTSBuiltin;
+  ArrayRef<Builtin::Info> getTargetBuiltins() const override {
+    return llvm::makeArrayRef(BuiltinInfo,
+      clang::Nios2::LastTSBuiltin - Builtin::FirstTSBuiltin);
   }
-  virtual bool hasFeature(StringRef Feature) const {
+
+  bool hasFeature(StringRef Feature) const override {
     return Feature == "nios2";
   }
-  virtual BuiltinVaListKind getBuiltinVaListKind() const {
+
+  BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::VoidPtrBuiltinVaList;
   }
-  virtual void getGCCRegNames(const char * const *&Names,
-                              unsigned &NumNames) const {
+
+  ArrayRef<const char *> getGCCRegNames() const override {
     static const char * const GCCRegNames[] = {
       // CPU register names
       // Must match second column of GCCRegAliases
@@ -7133,13 +7135,11 @@ public:
       "ctl0",  "ctl1",  "ctl2",  "ctl3",  "ctl4",  "ctl5",  "ctl6",  "ctl7",
       "ctl8",  "ctl9",  "ctl10", "ctl11", "ctl12", "ctl13", "ctl14", "ctl15"
     };
-    Names = GCCRegNames;
-    NumNames = llvm::array_lengthof(GCCRegNames);
+    return llvm::makeArrayRef(GCCRegNames);
   }
-  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
-                                unsigned &NumAliases) const = 0;
-  virtual bool validateAsmConstraint(const char *&Name,
-                                     TargetInfo::ConstraintInfo &Info) const {
+
+  bool validateAsmConstraint(const char *&Name,
+                             TargetInfo::ConstraintInfo &Info) const {
     switch (*Name) {
     default:
       return false;
@@ -7156,7 +7156,7 @@ public:
     }
   }
 
-  virtual const char *getClobbers() const {
+  const char *getClobbers() const override {
     // FIXME: Implement!
     return "";
   }
@@ -7168,16 +7168,17 @@ protected:
   bool HasHWDiv;
 
 public:
-  Nios2StdTargetInfo(const llvm::Triple& triple) :
-    Nios2TargetInfoBase(triple, "", "nios2"),
-    HasHWMul(false),
-    HasHWDiv(false)
-  {
+  Nios2StdTargetInfo(const llvm::Triple& triple)
+    : Nios2TargetInfoBase(triple, "", "nios2"),
+      HasHWMul(false),
+      HasHWDiv(false) {
+    DataLayoutString = "e-p:32:32:32-i8:8:32-i16:16:32-n32";
     SizeType = UnsignedInt;
     PtrDiffType = SignedInt;
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 32;
   }
-  virtual bool setABI(const std::string &Name) {
+
+  bool setABI(const std::string &Name) override {
     if ((Name == "o32") || (Name == "eabi")) {
       ABI = Name;
       return true;
@@ -7185,16 +7186,17 @@ public:
       return false;
   }
 
-  virtual bool hasFeature(StringRef Feature) const {
+  bool hasFeature(StringRef Feature) const override {
     return llvm::StringSwitch<bool>(Feature)
         .Case("hw-mul", HasHWMul)
         .Case("hw-div", HasHWDiv)
         .Default(false);
   }
+
   /// handleTargetFeatures - Perform initialization based on the user
   /// configured set of features.
-  virtual bool handleTargetFeatures(std::vector<std::string> &Features,
-                                           DiagnosticsEngine &Diags) {
+  bool handleTargetFeatures(std::vector<std::string> &Features,
+                            DiagnosticsEngine &Diags) override {
     // Remember the maximum enabled sselevel.
     for (unsigned i = 0, e = Features.size(); i !=e; ++i) {
       // Ignore disabled features.
@@ -7216,22 +7218,8 @@ public:
 
     return true;
   }
-  //virtual void getTargetDefines(const LangOptions &Opts,
-  //                              MacroBuilder &Builder) const {
-  //  MipsTargetInfoBase::getTargetDefines(Opts, Builder);
 
-  //  if (ABI == "o32") {
-  //    Builder.defineMacro("__mips_o32");
-  //    Builder.defineMacro("_ABIO32", "1");
-  //    Builder.defineMacro("_MIPS_SIM", "_ABIO32");
-  //  }
-  //  else if (ABI == "eabi")
-  //    Builder.defineMacro("__mips_eabi");
-  //  else
-  //    llvm_unreachable("Invalid ABI for Mips32.");
-  //}
-  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
-                                unsigned &NumAliases) const {
+  ArrayRef<GCCRegAlias> getGCCRegAliases() const override {
     static const TargetInfo::GCCRegAlias GCCRegAliases[] = {
       { { "zero" },  "r0" },
       { { "at" },  "r1" },
@@ -7258,8 +7246,7 @@ public:
       { { "mpubase" },  "ctl14" },
       { { "mpuacc" },   "ctl15" },
     };
-    Aliases = GCCRegAliases;
-    NumAliases = llvm::array_lengthof(GCCRegAliases);
+    return llvm::makeArrayRef(GCCRegAliases);
   }
 };
 
@@ -7270,7 +7257,6 @@ const Builtin::Info Nios2TargetInfoBase::BuiltinInfo[] = {
 #include "clang/Basic/BuiltinsNios2.def"
 };
 
-namespace {
 class PNaClTargetInfo : public TargetInfo {
 public:
   PNaClTargetInfo(const llvm::Triple &Triple) : TargetInfo(Triple) {
@@ -7701,6 +7687,7 @@ public:
     return true;
   }
 };
+
 } // end anonymous namespace
 
 //===----------------------------------------------------------------------===//
