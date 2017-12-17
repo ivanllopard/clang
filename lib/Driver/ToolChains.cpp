@@ -4405,7 +4405,7 @@ Nios2_TC::Nios2_TC(const Driver &D, const llvm::Triple &Triple,
 
   // Determine version of GCC libraries and headers to use.
   const std::string Nios2Dir(GnuDir + "/lib/gcc/nios2-elf");
-  llvm::error_code ec;
+  std::error_code ec;
   GCCVersion MaxVersion= GCCVersion::Parse("0.0.0");
   for (llvm::sys::fs::directory_iterator di(Nios2Dir, ec), de;
        !ec && di != de; di = di.increment(ec)) {
